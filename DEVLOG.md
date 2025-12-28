@@ -28,7 +28,12 @@
 ├── README.md                  # 프로젝트 문서
 ├── DEVLOG.md                  # 개발 로그 (이 파일)
 ├── .dev.vars                  # API 키 설정 파일
+├── .gitignore                 # Git 제외 파일 설정
 ├── run_production.sh          # 실행 스크립트
+├── scripts/
+│   ├── backup.sh              # 타임스탬프 백업 스크립트
+│   ├── rollback.sh            # 버전 롤백 스크립트
+│   └── version_manager.sh     # 통합 버전 관리 도구
 └── backups/                   # 백업 폴더 (버전별 백업)
 ```
 
@@ -145,30 +150,58 @@ GROQ_API_KEY=your_key
 
 ---
 
-## 버전 관리
+## 버전 관리 시스템
 
-### Git 사용법
+### 버전 관리 도구 사용법
 
 ```bash
-# 상태 확인
-git status
+# 통합 버전 관리 도구 실행 (메뉴 방식)
+./scripts/version_manager.sh
 
-# 변경사항 커밋
-git add .
-git commit -m "설명"
+# 빠른 백업 생성
+./scripts/backup.sh
 
-# 로그 확인
-git log --oneline
-
-# 특정 버전으로 복원
-git checkout <commit_hash> -- production_app.py
+# 이전 버전으로 롤백
+./scripts/rollback.sh
 ```
+
+### 버전 관리 도구 기능
+
+| 기능 | 설명 |
+|------|------|
+| 백업 생성 | 타임스탬프 기반 백업 파일 생성 |
+| 백업 목록 | 저장된 모든 백업 파일 확인 |
+| 버전 롤백 | 선택한 백업 버전으로 복원 |
+| 버전 비교 | 현재 파일과 백업 파일 diff 비교 |
+| Git 커밋 | 현재 변경사항 Git 커밋 |
+| Git 로그 | 커밋 이력 확인 |
+| Git 롤백 | 특정 Git 커밋으로 복원 |
+| 오래된 백업 정리 | 30일 이상 된 백업 자동 삭제 |
+
+### Git 커밋 이력
+
+| 커밋 | 날짜 | 설명 |
+|------|------|------|
+| d65c512 | 2025-12-28 | v1.0.0: Initial commit |
 
 ### 백업 파일
 
 | 파일명 | 날짜 | 설명 |
 |--------|------|------|
 | `production_app_backup_20251228_183819.py` | 2025-12-28 18:38 | 주석 추가 전 백업 |
+
+### 긴급 복구 방법
+
+```bash
+# 방법 1: 백업 파일에서 복원
+cp backups/production_app_v{원하는버전}.py production_app.py
+
+# 방법 2: Git에서 복원
+git checkout {커밋해시} -- production_app.py
+
+# 방법 3: 롤백 스크립트 사용
+./scripts/rollback.sh
+```
 
 ---
 
@@ -202,7 +235,27 @@ cd /home/orangepi/dual_npu_demo && ./run_production.sh
 | 날짜 | 작성자 | 내용 |
 |------|--------|------|
 | 2025-12-28 | Claude AI | 초기 DEVLOG.md 생성 |
+| 2025-12-28 | Claude AI | 버전 관리 시스템 추가 (Git + 백업 스크립트) |
+
+---
+
+## 새 AI 대화 시작 시 복사할 프롬프트
+
+```
+이전 개발 대화가 중단되어 새로 시작합니다.
+
+프로젝트 위치: /home/orangepi/dual_npu_demo/
+
+먼저 다음 파일들을 읽어서 이전 개발 내용을 파악해주세요:
+1. DEVLOG.md - 개발 로그 (필수)
+2. README.md - 프로젝트 개요
+3. git log --oneline -10 - 최근 변경사항
+
+이전 개발 내용을 파악한 후, [여기에 요청사항 작성] 작업을 진행해주세요.
+```
 
 ---
 
 > **참고**: 이 로그 파일은 개발 진행 시마다 업데이트하여 개발 연속성을 유지하세요.
+>
+> **중요**: 주요 기능 개발 완료 후 반드시 `./scripts/backup.sh` 실행하여 백업하세요.
