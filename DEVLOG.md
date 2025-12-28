@@ -24,7 +24,8 @@
 
 ```
 /home/orangepi/dual_npu_demo/
-├── production_app.py          # 메인 애플리케이션 (143KB, 3600+ lines)
+├── production_app.py          # 메인 애플리케이션 (148KB, 3700+ lines)
+├── rk3588_vlm_server.py       # RK3588 로컬 VLM API 서버
 ├── README.md                  # 프로젝트 문서
 ├── DEVLOG.md                  # 개발 로그 (이 파일)
 ├── .dev.vars                  # API 키 설정 파일
@@ -40,6 +41,33 @@
 ---
 
 ## 개발 이력
+
+### [2025-12-28] v1.1.0 - RK3588 로컬 VLM 지원
+
+#### 완료된 기능
+
+8. **RK3588 로컬 VLM 모델 지원**
+   - 파일: `rk3588_vlm_server.py` (신규), `production_app.py`
+   - 설명: RK3588 NPU에서 로컬로 실행되는 Vision-Language Model 지원
+   - 지원 모델 (9종):
+     - Qwen2-VL-2B, Qwen2.5-VL-3B, Qwen3-VL-2B
+     - MiniCPM-V-2.6
+     - InternVL2-1B, InternVL3-1B
+     - Janus-Pro-1B, SmolVLM, DeepSeek-OCR
+   - 기능:
+     - FastAPI 기반 OpenAI 호환 API 서버
+     - RKLLM/RKLLAMA 런타임 통합
+     - API 키 없이 로컬에서 무료 실행
+   - 사용법:
+     ```bash
+     # VLM 서버 시작
+     python3 rk3588_vlm_server.py --port 8088
+
+     # 또는 RKLLAMA 서버
+     rkllama_server --models ~/rkllm_models
+     ```
+
+---
 
 ### [2025-12-28] v1.0.0 - 초기 릴리스
 
@@ -182,6 +210,7 @@ GROQ_API_KEY=your_key
 
 | 커밋 | 날짜 | 설명 |
 |------|------|------|
+| 21c39c7 | 2025-12-28 | RK3588 로컬 VLM 모델 지원 추가 |
 | 83ee4a1 | 2025-12-28 | 개발 지침서 및 보안 시스템 추가 |
 | b7d555d | 2025-12-28 | 버전 관리 시스템 추가 |
 | d65c512 | 2025-12-28 | v1.0.0: Initial commit |
@@ -190,6 +219,7 @@ GROQ_API_KEY=your_key
 
 | 파일명 | 날짜 | 설명 |
 |--------|------|------|
+| `production_app_v20251228_201147.py` | 2025-12-28 20:11 | RK3588 로컬 VLM 모델 지원 추가 |
 | `production_app_v20251228_194309.py` | 2025-12-28 19:43 | 자동설명 다국어 지원 추가 |
 | `production_app_v20251228_190036.py` | 2025-12-28 19:00 | 버전 관리 시스템 추가 후 |
 | `production_app_backup_20251228_183819.py` | 2025-12-28 18:38 | 주석 추가 전 백업 |
