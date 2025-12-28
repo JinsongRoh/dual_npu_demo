@@ -1,0 +1,28 @@
+# API 키 및 환경 변수
+.dev.vars
+*.env
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 임시 파일
+*.tmp
+*.temp
+*.log
+*.swp
+*.swo
+*~
+
+# IDE 설정
+.vscode/
+.idea/
+*.sublime-*
+
+# OS 파일
+.DS_Store
+Thumbs.db
+backups/
