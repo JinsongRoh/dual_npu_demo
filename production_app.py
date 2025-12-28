@@ -131,13 +131,31 @@ RKLLAMA_API = "http://localhost:8080"
 # provider: API 제공자, model: 모델 ID, cost: 비용 등급
 # -----------------------------------------------------------------------------
 VISION_LLM_OPTIONS = {
+    # =============================================
+    # 클라우드 LLM 모델 (Cloud LLM Models)
+    # =============================================
     "Gemini Flash (Free)": {"provider": "gemini", "model": "gemini-2.0-flash", "cost": "Free"},
     "Gemini Pro": {"provider": "gemini", "model": "gemini-1.5-pro", "cost": "Paid"},
     "GPT-4o Vision": {"provider": "openai", "model": "gpt-4o", "cost": "Paid"},
     "GPT-4o Mini": {"provider": "openai", "model": "gpt-4o-mini", "cost": "Cheap"},
     "Claude Sonnet": {"provider": "claude", "model": "claude-sonnet-4-20250514", "cost": "Paid"},
     "Claude Haiku": {"provider": "claude", "model": "claude-3-haiku-20240307", "cost": "Cheap"},
+    # =============================================
+    # RK3588 로컬 VLM 모델 (Local VLM Models)
+    # =============================================
+    "🖥️ Qwen2-VL-2B": {"provider": "local_vlm", "model": "qwen2-vl-2b", "cost": "Local"},
+    "🖥️ Qwen2.5-VL-3B": {"provider": "local_vlm", "model": "qwen2.5-vl-3b", "cost": "Local"},
+    "🖥️ Qwen3-VL-2B": {"provider": "local_vlm", "model": "qwen3-vl-2b", "cost": "Local"},
+    "🖥️ MiniCPM-V-2.6": {"provider": "local_vlm", "model": "minicpm-v-2.6", "cost": "Local"},
+    "🖥️ InternVL2-1B": {"provider": "local_vlm", "model": "internvl2-1b", "cost": "Local"},
+    "🖥️ InternVL3-1B": {"provider": "local_vlm", "model": "internvl3-1b", "cost": "Local"},
+    "🖥️ Janus-Pro-1B": {"provider": "local_vlm", "model": "janus-pro-1b", "cost": "Local"},
+    "🖥️ SmolVLM": {"provider": "local_vlm", "model": "smolvlm-instruct", "cost": "Local"},
+    "🖥️ DeepSeek-OCR": {"provider": "local_vlm", "model": "deepseek-ocr", "cost": "Local"},
 }
+
+# RK3588 로컬 VLM API 서버 설정
+LOCAL_VLM_API_URL = os.environ.get("LOCAL_VLM_API_URL", "http://localhost:8088")
 
 # =============================================================================
 # API 키 관리 (API Key Management)
@@ -949,6 +967,59 @@ class VisionLLMClient:
                 return f"Grok Error: {response.status_code} - {response.text[:200]}"
         except Exception as e:
             return f"Grok Error: {str(e)}"
+
+    @staticmethod
+    def call_local_vlm(image_base64, prompt, model="qwen2-vl-2b"):
+        """
+        RK3588 로컬 VLM API 호출
+
+        Args:
+            image_base64: Base64 인코딩된 이미지
+            prompt: 사용자 프롬프트
+            model: 로컬 VLM 모델 ID
+
+        Returns:
+            str: 생성된 응답 텍스트
+
+        지원 모델:
+            - qwen2-vl-2b, qwen2.5-vl-3b, qwen3-vl-2b
+            - minicpm-v-2.6
+            - internvl2-1b, internvl3-1b
+            - janus-pro-1b, smolvlm-instruct, deepseek-ocr
+        """
+        url = f"{LOCAL_VLM_API_URL}/v1/chat/completions"
+
+        payload = {
+            "model": model,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
+                    {"type": "text", "text": prompt}
+                ]
+            }],
+            "max_tokens": 512,
+            "temperature": 0.7
+        }
+
+        try:
+            response = requests.post(url, json=payload, timeout=60)
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("choices", [{}])[0].get("message", {}).get("content", "No response")
+            else:
+                error_msg = response.text[:200] if response.text else "Unknown error"
+                return f"Local VLM Error: {response.status_code} - {error_msg}"
+        except requests.exceptions.ConnectionError:
+            return (
+                "🖥️ 로컬 VLM 서버에 연결할 수 없습니다.\n\n"
+                "서버 시작 방법:\n"
+                "python3 rk3588_vlm_server.py --port 8088\n\n"
+                "또는 RKLLAMA 서버:\n"
+                "rkllama_server --models ~/rkllm_models"
+            )
+        except Exception as e:
+            return f"Local VLM Error: {str(e)}"
 
 # ===== STT/TTS Classes =====
 
@@ -2549,6 +2620,9 @@ CRITICAL INSTRUCTION: You MUST respond ONLY in {ui_lang_name}. Do NOT use any ot
                             result = VisionLLMClient.call_openai(image_base64, vision_prompt, API_KEYS["openai"], model)
                         elif provider == "xai":
                             result = VisionLLMClient.call_xai(image_base64, vision_prompt, API_KEYS["xai"], model)
+                        # RK3588 로컬 VLM 모델 처리 (NPU 추론)
+                        elif provider == "local_vlm":
+                            result = VisionLLMClient.call_local_vlm(image_base64, vision_prompt, model)
                         else:
                             result = "Unknown provider"
                     else:
@@ -2948,15 +3022,17 @@ class ProductionApp(QMainWindow):
             model = config.get("model", "")
 
             # Update status with API key check
-            if provider != "local":
+            # 로컬 모델 (local, local_vlm)은 API 키 불필요
+            if provider not in ("local", "local_vlm"):
                 api_key = API_KEYS.get(provider, "")
                 if api_key:
                     self.llm_status.setText(f"LLM: {model_name} ({cost})")
                     self.llm_status.setStyleSheet("color: #00ff88;")
                 else:
-                    self.llm_status.setText(f"LLM: {model_name} - API Key Missing!")
+                    self.llm_status.setText(f"LLM: {model_name} - {get_text('api_key_missing')}")
                     self.llm_status.setStyleSheet("color: #ff6b6b;")
             else:
+                # 로컬 모델은 API 키 없이 바로 사용 가능
                 self.llm_status.setText(f"LLM: {model_name} ({cost})")
                 self.llm_status.setStyleSheet("color: #00ff88;")
 
