@@ -263,6 +263,7 @@ UI_TRANSLATIONS = {
         "what_see_prompt": "이 화면에서 무엇이 보이나요?",
         "analyze_prompt": "이 화면을 자세히 분석해주세요",
         "explain_prompt": "이 장면을 설명해주세요",
+        "auto_desc_prompt": "지금 보이는 화면을 간단히 설명해주세요. 3문장 이내로.",
         "auto": "⏱️ 자동",
         "llm_init": "LLM: 초기화 중...",
         "frame_captured": "프레임 캡처됨! 분석 중...",
@@ -309,6 +310,7 @@ UI_TRANSLATIONS = {
         "what_see_prompt": "What do you see in this image?",
         "analyze_prompt": "Please analyze this image in detail",
         "explain_prompt": "Please explain this scene",
+        "auto_desc_prompt": "Please briefly describe what you see on the screen. In 3 sentences or less.",
         "auto": "⏱️ Auto",
         "llm_init": "LLM: Initializing...",
         "frame_captured": "Frame captured! Analyzing...",
@@ -355,6 +357,7 @@ UI_TRANSLATIONS = {
         "what_see_prompt": "この画像に何が見えますか？",
         "analyze_prompt": "この画像を詳しく分析してください",
         "explain_prompt": "このシーンを説明してください",
+        "auto_desc_prompt": "今見えている画面を簡潔に説明してください。3文以内で。",
         "auto": "⏱️ 自動",
         "llm_init": "LLM: 初期化中...",
         "frame_captured": "フレームキャプチャ！分析中...",
@@ -401,6 +404,7 @@ UI_TRANSLATIONS = {
         "what_see_prompt": "这张图片里你看到了什么？",
         "analyze_prompt": "请详细分析这张图片",
         "explain_prompt": "请解释这个场景",
+        "auto_desc_prompt": "请简要描述您在屏幕上看到的内容。不超过3句话。",
         "auto": "⏱️ 自动",
         "llm_init": "LLM: 初始化中...",
         "frame_captured": "帧已捕获！分析中...",
@@ -447,6 +451,7 @@ UI_TRANSLATIONS = {
         "what_see_prompt": "¿Qué ves en esta imagen?",
         "analyze_prompt": "Por favor, analiza esta imagen en detalle",
         "explain_prompt": "Por favor, explica esta escena",
+        "auto_desc_prompt": "Por favor, describe brevemente lo que ves en la pantalla. En 3 oraciones o menos.",
         "auto": "⏱️ Auto",
         "llm_init": "LLM: Inicializando...",
         "frame_captured": "¡Captura! Analizando...",
@@ -493,6 +498,7 @@ UI_TRANSLATIONS = {
         "what_see_prompt": "Que voyez-vous dans cette image?",
         "analyze_prompt": "Veuillez analyser cette image en détail",
         "explain_prompt": "Veuillez expliquer cette scène",
+        "auto_desc_prompt": "Veuillez décrire brièvement ce que vous voyez à l'écran. En 3 phrases maximum.",
         "auto": "⏱️ Auto",
         "llm_init": "LLM: Initialisation...",
         "frame_captured": "Capture! Analyse...",
@@ -539,6 +545,7 @@ UI_TRANSLATIONS = {
         "what_see_prompt": "Was sehen Sie in diesem Bild?",
         "analyze_prompt": "Bitte analysieren Sie dieses Bild im Detail",
         "explain_prompt": "Bitte erklären Sie diese Szene",
+        "auto_desc_prompt": "Bitte beschreiben Sie kurz, was Sie auf dem Bildschirm sehen. In maximal 3 Sätzen.",
         "auto": "⏱️ Auto",
         "llm_init": "LLM: Initialisierung...",
         "frame_captured": "Erfasst! Analyse...",
@@ -585,6 +592,7 @@ UI_TRANSLATIONS = {
         "what_see_prompt": "O que você vê nesta imagem?",
         "analyze_prompt": "Por favor, analise esta imagem em detalhes",
         "explain_prompt": "Por favor, explique esta cena",
+        "auto_desc_prompt": "Por favor, descreva brevemente o que você vê na tela. Em no máximo 3 frases.",
         "auto": "⏱️ Auto",
         "llm_init": "LLM: Inicializando...",
         "frame_captured": "Capturado! Analisando...",
@@ -631,6 +639,7 @@ UI_TRANSLATIONS = {
         "what_see_prompt": "Что вы видите на этом изображении?",
         "analyze_prompt": "Пожалуйста, проанализируйте это изображение подробно",
         "explain_prompt": "Пожалуйста, объясните эту сцену",
+        "auto_desc_prompt": "Пожалуйста, кратко опишите то, что вы видите на экране. Не более 3 предложений.",
         "auto": "⏱️ Авто",
         "llm_init": "LLM: Инициализация...",
         "frame_captured": "Захвачено! Анализ...",
@@ -677,6 +686,7 @@ UI_TRANSLATIONS = {
         "what_see_prompt": "ماذا ترى في هذه الصورة؟",
         "analyze_prompt": "من فضلك حلل هذه الصورة بالتفصيل",
         "explain_prompt": "من فضلك اشرح هذا المشهد",
+        "auto_desc_prompt": "من فضلك صف بإيجاز ما تراه على الشاشة. في 3 جمل أو أقل.",
         "auto": "⏱️ تلقائي",
         "llm_init": "LLM: جاري التهيئة...",
         "frame_captured": "تم الالتقاط! جاري التحليل...",
@@ -3492,7 +3502,7 @@ class ProductionApp(QMainWindow):
             print("[AutoDesc] Frame updated for LLM")
 
             # Use a specific prompt for auto-description
-            auto_prompt = "⏱️ 지금 보이는 화면을 간단히 설명해주세요. 3문장 이내로."
+            auto_prompt = f"⏱️ {get_text('auto_desc_prompt')}"
 
             # Set flag for voice output on response
             self._auto_desc_pending = True

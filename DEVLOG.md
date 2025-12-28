@@ -182,12 +182,16 @@ GROQ_API_KEY=your_key
 
 | 커밋 | 날짜 | 설명 |
 |------|------|------|
+| 83ee4a1 | 2025-12-28 | 개발 지침서 및 보안 시스템 추가 |
+| b7d555d | 2025-12-28 | 버전 관리 시스템 추가 |
 | d65c512 | 2025-12-28 | v1.0.0: Initial commit |
 
 ### 백업 파일
 
 | 파일명 | 날짜 | 설명 |
 |--------|------|------|
+| `production_app_v20251228_194309.py` | 2025-12-28 19:43 | 자동설명 다국어 지원 추가 |
+| `production_app_v20251228_190036.py` | 2025-12-28 19:00 | 버전 관리 시스템 추가 후 |
 | `production_app_backup_20251228_183819.py` | 2025-12-28 18:38 | 주석 추가 전 백업 |
 
 ### 긴급 복구 방법
@@ -236,6 +240,10 @@ cd /home/orangepi/dual_npu_demo && ./run_production.sh
 |------|--------|------|
 | 2025-12-28 | Claude AI | 초기 DEVLOG.md 생성 |
 | 2025-12-28 | Claude AI | 버전 관리 시스템 추가 (Git + 백업 스크립트) |
+| 2025-12-28 | Claude AI | 개발 지침서(DEV_GUIDELINES.md) 생성 |
+| 2025-12-28 | Claude AI | 보안 시스템 추가 (pre-commit hook, security_check.sh) |
+| 2025-12-28 | Claude AI | 자동 설명 프롬프트 다국어 지원 추가 |
+| 2025-12-28 | Claude AI | GitHub 저장소 생성 및 푸시 (JinsongRoh/dual_npu_demo) |
 
 ---
 
