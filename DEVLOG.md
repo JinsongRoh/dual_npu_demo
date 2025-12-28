@@ -274,6 +274,10 @@ cd /home/orangepi/dual_npu_demo && ./run_production.sh
 | 2025-12-28 | Claude AI | 보안 시스템 추가 (pre-commit hook, security_check.sh) |
 | 2025-12-28 | Claude AI | 자동 설명 프롬프트 다국어 지원 추가 |
 | 2025-12-28 | Claude AI | GitHub 저장소 생성 및 푸시 (JinsongRoh/dual_npu_demo) |
+| 2025-12-28 | Claude AI | RK3588 로컬 VLM 모델 지원 추가 (9종) |
+| 2025-12-28 | Claude AI | VLM 모델 다운로드 (Qwen2-VL-2B, MiniCPM-V-2.6) |
+| 2025-12-28 | Claude AI | RKNPU 0.9.8 드라이버 설치 준비 |
+| 2025-12-28 | Claude AI | 프로젝트 외장 드라이브로 이동 (/mnt/external/) |
 
 ---
 

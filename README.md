@@ -60,6 +60,10 @@
   - Anthropic Claude
   - Groq (고속 추론)
   - xAI Grok
+  - **🖥️ RK3588 로컬 VLM** (NEW!)
+    - Qwen2-VL-2B / Qwen2.5-VL / Qwen3-VL
+    - MiniCPM-V-2.6
+    - InternVL2/3, Janus-Pro, SmolVLM, DeepSeek-OCR
 
 ### 3. 음성 기능
 - **STT (Speech-to-Text)**: OpenAI Whisper API
