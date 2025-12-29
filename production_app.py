@@ -107,6 +107,10 @@ try:
     import sounddevice as sd    # 오디오 녹음/재생
     import soundfile as sf      # 오디오 파일 읽기/쓰기
     from openai import OpenAI   # OpenAI API (Whisper STT, TTS)
+    # Set default audio devices by NAME (indices change after reboot!)
+    # Input: USB LifeCam microphone, Output: HDMI1 via rockchip
+    sd.default.device = ('LifeCam', 'rockchip-hdmi1')  # Full name to avoid dmix conflict
+    sd.default.samplerate = 48000
     AUDIO_AVAILABLE = True
 except ImportError:
     AUDIO_AVAILABLE = False
@@ -143,19 +147,268 @@ VISION_LLM_OPTIONS = {
     # =============================================
     # RK3588 로컬 VLM 모델 (Local VLM Models)
     # =============================================
-    "🖥️ Qwen2-VL-2B": {"provider": "local_vlm", "model": "qwen2-vl-2b", "cost": "Local"},
     "🖥️ Qwen2.5-VL-3B": {"provider": "local_vlm", "model": "qwen2.5-vl-3b", "cost": "Local"},
-    "🖥️ Qwen3-VL-2B": {"provider": "local_vlm", "model": "qwen3-vl-2b", "cost": "Local"},
-    "🖥️ MiniCPM-V-2.6": {"provider": "local_vlm", "model": "minicpm-v-2.6", "cost": "Local"},
-    "🖥️ InternVL2-1B": {"provider": "local_vlm", "model": "internvl2-1b", "cost": "Local"},
-    "🖥️ InternVL3-1B": {"provider": "local_vlm", "model": "internvl3-1b", "cost": "Local"},
-    "🖥️ Janus-Pro-1B": {"provider": "local_vlm", "model": "janus-pro-1b", "cost": "Local"},
-    "🖥️ SmolVLM": {"provider": "local_vlm", "model": "smolvlm-instruct", "cost": "Local"},
-    "🖥️ DeepSeek-OCR": {"provider": "local_vlm", "model": "deepseek-ocr", "cost": "Local"},
 }
 
 # RK3588 로컬 VLM API 서버 설정
 LOCAL_VLM_API_URL = os.environ.get("LOCAL_VLM_API_URL", "http://localhost:8088")
+
+# =============================================================================
+# RK3588 로컬 VLM 클래스 (Direct NPU Inference)
+# =============================================================================
+
+# =============================================================================
+# RK3588 VLM 모델 설정 (다중 모델 지원)
+# =============================================================================
+RK3588_VLM_MODELS = {
+    # RKLLM 1.2.1 호환 모델만 지원
+    "qwen2.5-vl-3b": {
+        "path": "/mnt/external/rkllm_models/Qwen2.5-VL-3B",
+        "vision": "vision_encoder.rknn",
+        "llm": "language_model_w8a8.rkllm",
+        "image_size": 476,
+        "img_start": "<|vision_start|>",
+        "img_end": "<|vision_end|>",
+        "img_content": "<|image_pad|>",
+    },
+    # qwen2-vl-2b: RKLLM 1.1.4용으로 1.2.1과 호환 불가
+    # minicpm-v-2.6: 8GB LLM으로 메모리 부족
+}
+
+# 기본 모델 설정
+RK3588_DEFAULT_MODEL = "qwen2.5-vl-3b"
+
+class RK3588LocalVLM:
+    """
+    RK3588 NPU에서 직접 VLM 추론을 수행하는 클래스 (싱글톤)
+
+    지원 모델:
+    - qwen2.5-vl-3b: Vision 4.5초, LLM ~8 tokens/s
+    - qwen2-vl-2b: Vision 3초, LLM ~12 tokens/s
+    """
+    _instance = None
+    _initialized = False
+    _current_model = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if RK3588LocalVLM._initialized:
+            return
+
+        self.vision_session = None
+        self.rk_llm = None
+        self.is_ready = False
+        self.response_text = ""
+        self.IMAGE_HEIGHT = 476
+        self.IMAGE_WIDTH = 476
+        self.current_model = None
+        self.model_config = None
+
+    def initialize(self, model_name=None):
+        """
+        모델 초기화 (처음 호출 시에만 실행)
+
+        Args:
+            model_name: 모델 이름 (qwen2.5-vl-3b, qwen2-vl-2b 등)
+        """
+        if model_name is None:
+            model_name = RK3588_DEFAULT_MODEL
+
+        # 이미 같은 모델이 로드되어 있으면 스킵
+        if self.is_ready and self.current_model == model_name:
+            return True
+
+        # 다른 모델 요청 시 경고 (모델 교체 미지원)
+        if self.is_ready and self.current_model != model_name:
+            print(f"[RK3588-VLM] 경고: 이미 {self.current_model} 로드됨. 재시작 필요.")
+            return True  # 기존 모델로 계속 진행
+
+        # 모델 설정 확인
+        if model_name not in RK3588_VLM_MODELS:
+            print(f"[RK3588-VLM] 오류: {model_name} 모델 설정 없음")
+            return False
+
+        self.model_config = RK3588_VLM_MODELS[model_name]
+        model_path = self.model_config["path"]
+        vision_file = f"{model_path}/{self.model_config['vision']}"
+        llm_file = f"{model_path}/{self.model_config['llm']}"
+
+        # 이미지 크기 설정
+        self.IMAGE_HEIGHT = self.model_config.get("image_size", 476)
+        self.IMAGE_WIDTH = self.model_config.get("image_size", 476)
+
+        try:
+            print(f"[RK3588-VLM] {model_name} 모델 초기화 시작...")
+
+            # Vision Encoder 로드 (RKNN)
+            import ztu_somemodelruntime_rknnlite2 as ort
+            sess_options = ort.SessionOptions()
+            sess_options.intra_op_num_threads = 3
+            self.vision_session = ort.InferenceSession(vision_file, sess_options)
+            self.vision_input_name = self.vision_session.get_inputs()[0].name
+            self.vision_output_name = self.vision_session.get_outputs()[0].name
+            print(f"[RK3588-VLM] Vision Encoder 로드 완료")
+
+            # LLM 로드 (RKLLM)
+            from rkllm_binding import (
+                RKLLMRuntime, RKLLMParam, RKLLMInput, RKLLMInferParam,
+                LLMCallState, RKLLMInputType, RKLLMInferMode
+            )
+            self.RKLLMInput = RKLLMInput
+            self.RKLLMInferParam = RKLLMInferParam
+            self.RKLLMInputType = RKLLMInputType
+            self.RKLLMInferMode = RKLLMInferMode
+            self.LLMCallState = LLMCallState
+
+            self.rk_llm = RKLLMRuntime()
+            param = self.rk_llm.create_default_param()
+            param.model_path = llm_file.encode('utf-8')
+            param.top_k = 1
+            param.max_new_tokens = 256
+            param.max_context_len = 512
+            param.skip_special_token = True
+            param.img_start = self.model_config.get("img_start", "<|vision_start|>").encode('utf-8')
+            param.img_end = self.model_config.get("img_end", "<|vision_end|>").encode('utf-8')
+            param.img_content = self.model_config.get("img_content", "<|image_pad|>").encode('utf-8')
+            param.extend_param.base_domain_id = 1
+
+            self.rk_llm.init(param, self._llm_callback)
+            self.rk_llm.set_chat_template(
+                system_prompt="<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n",
+                prompt_prefix="<|im_start|>user\n",
+                prompt_postfix="<|im_end|>\n<|im_start|>assistant\n"
+            )
+            print(f"[RK3588-VLM] LLM 로드 완료")
+
+            self.is_ready = True
+            self.current_model = model_name
+            RK3588LocalVLM._initialized = True
+            RK3588LocalVLM._current_model = model_name
+            print(f"[RK3588-VLM] {model_name} 모델 초기화 완료!")
+            return True
+
+        except Exception as e:
+            print(f"[RK3588-VLM] 초기화 실패: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _llm_callback(self, result_ptr, userdata_ptr, state_enum):
+        """LLM 응답 콜백"""
+        state = self.LLMCallState(state_enum)
+        result = result_ptr.contents
+
+        if state == self.LLMCallState.RKLLM_RUN_NORMAL:
+            if result.text:
+                self.response_text += result.text.decode('utf-8', errors='ignore')
+        return 0
+
+    def _preprocess_image(self, image_data):
+        """이미지 전처리 (numpy array 또는 base64)"""
+        import cv2
+        import numpy as np
+        import base64
+
+        # base64 문자열인 경우 디코딩
+        if isinstance(image_data, str):
+            img_bytes = base64.b64decode(image_data)
+            img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        else:
+            img = image_data
+
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        # 정사각형으로 확장
+        h, w = img.shape[:2]
+        size = max(h, w)
+        square_img = np.full((size, size, 3), 127, dtype=np.uint8)
+        x_off, y_off = (size - w) // 2, (size - h) // 2
+        square_img[y_off:y_off+h, x_off:x_off+w] = img
+
+        # 리사이즈
+        resized = cv2.resize(square_img, (self.IMAGE_WIDTH, self.IMAGE_HEIGHT))
+
+        # 정규화 및 변환
+        tensor = resized.astype(np.float32)
+        tensor = (tensor / 255.0 - np.array([0.48145466, 0.4578275, 0.40821073])) / np.array([0.26862954, 0.26130258, 0.27577711])
+        tensor = np.transpose(tensor, (2, 0, 1))  # HWC -> CHW
+        tensor = np.expand_dims(tensor, axis=0)   # Add batch
+
+        return tensor.astype(np.float32)
+
+    def inference(self, image_data, prompt, model_name=None):
+        """
+        VLM 추론 수행
+
+        Args:
+            image_data: numpy array (BGR) 또는 base64 문자열
+            prompt: 사용자 프롬프트
+            model_name: 모델 이름 (없으면 기본 모델 사용)
+
+        Returns:
+            str: 생성된 응답 텍스트
+        """
+        import ctypes
+        import numpy as np
+
+        if not self.is_ready:
+            if not self.initialize(model_name):
+                return "🖥️ RK3588 VLM 모델 초기화 실패"
+
+        try:
+            # 이미지 전처리
+            input_tensor = self._preprocess_image(image_data)
+
+            # Vision Encoder 실행
+            img_vec_output = self.vision_session.run(
+                [self.vision_output_name],
+                {self.vision_input_name: input_tensor}
+            )[0]
+            img_vec = img_vec_output.flatten().astype(np.float32)
+
+            # LLM 추론
+            self.response_text = ""
+
+            rkllm_input = self.RKLLMInput()
+            rkllm_input.role = b"user"
+            rkllm_input.input_type = self.RKLLMInputType.RKLLM_INPUT_MULTIMODAL
+
+            full_prompt = f"Picture 1: <image> {prompt}"
+            rkllm_input.multimodal_input.prompt = full_prompt.encode('utf-8')
+            rkllm_input.multimodal_input.image_embed = img_vec.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+            rkllm_input.multimodal_input.n_image_tokens = img_vec_output.shape[0]
+            rkllm_input.multimodal_input.n_image = 1
+            rkllm_input.multimodal_input.image_height = self.IMAGE_HEIGHT
+            rkllm_input.multimodal_input.image_width = self.IMAGE_WIDTH
+
+            infer_params = self.RKLLMInferParam()
+            infer_params.mode = self.RKLLMInferMode.RKLLM_INFER_GENERATE
+            infer_params.keep_history = 0
+
+            self.rk_llm.run(rkllm_input, infer_params)
+
+            return self.response_text.strip() if self.response_text else "No response"
+
+        except Exception as e:
+            print(f"[RK3588-VLM] 추론 오류: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"🖥️ RK3588 VLM 오류: {str(e)}"
+
+# 글로벌 인스턴스 (지연 초기화)
+_rk3588_vlm_instance = None
+
+def get_rk3588_vlm():
+    """RK3588 VLM 싱글톤 인스턴스 반환"""
+    global _rk3588_vlm_instance
+    if _rk3588_vlm_instance is None:
+        _rk3588_vlm_instance = RK3588LocalVLM()
+    return _rk3588_vlm_instance
 
 # =============================================================================
 # API 키 관리 (API Key Management)
@@ -969,24 +1222,43 @@ class VisionLLMClient:
             return f"Grok Error: {str(e)}"
 
     @staticmethod
-    def call_local_vlm(image_base64, prompt, model="qwen2-vl-2b"):
+    def call_local_vlm(image_base64, prompt, model="qwen2.5-vl-3b"):
         """
-        RK3588 로컬 VLM API 호출
+        RK3588 로컬 VLM 추론 (직접 NPU 사용)
 
         Args:
             image_base64: Base64 인코딩된 이미지
             prompt: 사용자 프롬프트
-            model: 로컬 VLM 모델 ID
+            model: 로컬 VLM 모델 ID (기본: qwen2.5-vl-3b)
 
         Returns:
             str: 생성된 응답 텍스트
 
-        지원 모델:
-            - qwen2-vl-2b, qwen2.5-vl-3b, qwen3-vl-2b
-            - minicpm-v-2.6
-            - internvl2-1b, internvl3-1b
-            - janus-pro-1b, smolvlm-instruct, deepseek-ocr
+        지원 모델 (NPU 직접 추론):
+            - qwen2.5-vl-3b: 3B 파라미터, Vision 4초, LLM 8 tokens/s
+            - 기타 모델은 HTTP API 서버 필요 (RKLLM 1.2.1 호환 모델만)
         """
+        # NPU 직접 추론 지원 모델 (RKLLM 1.2.1 호환)
+        DIRECT_NPU_MODELS = ["qwen2.5-vl-3b"]
+
+        if model in DIRECT_NPU_MODELS:
+            try:
+                import sys
+                sys.stdout.flush()
+                print(f"[RK3588-VLM] 직접 추론 시작 - model: {model}", flush=True)
+                vlm = get_rk3588_vlm()
+                print(f"[RK3588-VLM] VLM 인스턴스 획득, is_ready: {vlm.is_ready}, current: {vlm.current_model}", flush=True)
+                result = vlm.inference(image_base64, prompt, model)
+                print(f"[RK3588-VLM] 추론 완료, 응답 길이: {len(result) if result else 0}", flush=True)
+                return result
+            except Exception as e:
+                import traceback
+                print(f"[RK3588-VLM] 직접 추론 실패: {e}", flush=True)
+                traceback.print_exc()
+                # 실패 시 오류 메시지 직접 반환 (HTTP 폴백 안함)
+                return f"🖥️ RK3588 VLM 오류: {str(e)}"
+
+        # 기타 모델 또는 폴백: HTTP API 서버 사용
         url = f"{LOCAL_VLM_API_URL}/v1/chat/completions"
 
         payload = {
@@ -1012,11 +1284,9 @@ class VisionLLMClient:
                 return f"Local VLM Error: {response.status_code} - {error_msg}"
         except requests.exceptions.ConnectionError:
             return (
-                "🖥️ 로컬 VLM 서버에 연결할 수 없습니다.\n\n"
-                "서버 시작 방법:\n"
-                "python3 rk3588_vlm_server.py --port 8088\n\n"
-                "또는 RKLLAMA 서버:\n"
-                "rkllama_server --models ~/rkllm_models"
+                "🖥️ RK3588 VLM 모델을 로드할 수 없습니다.\n\n"
+                "모델 경로: /mnt/external/rkllm_models/Qwen2.5-VL-3B/\n"
+                "필요 파일: vision_encoder.rknn, language_model_w8a8.rkllm"
             )
         except Exception as e:
             return f"Local VLM Error: {str(e)}"
@@ -1159,22 +1429,32 @@ class TextToSpeech(QThread):
 
             # Call OpenAI TTS API
             client = OpenAI(api_key=self.api_key)
-            response = client.audio.speech.create(
+
+            # Save to temp file and play (using with_streaming_response to fix deprecation bug)
+            with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as f:
+                temp_path = f.name
+
+            with client.audio.speech.with_streaming_response.create(
                 model="tts-1-hd",  # High quality model
                 voice=self.voice,
                 input=text,
                 speed=self.speed
-            )
-
-            # Save to temp file and play
-            with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as f:
-                response.stream_to_file(f.name)
-                temp_path = f.name
+            ) as response:
+                response.stream_to_file(temp_path)
 
             # Play audio
             self.status_changed.emit("Speaking...")
             data, samplerate = sf.read(temp_path)
-            sd.play(data, samplerate)
+            # Resample to 48000Hz for HDMI output
+            target_sr = 48000
+            if samplerate != target_sr:
+                from scipy import signal
+                num_samples = int(len(data) * target_sr / samplerate)
+                data = signal.resample(data, num_samples)
+            # Convert mono to stereo for HDMI output
+            if len(data.shape) == 1:
+                data = np.column_stack([data, data])
+            sd.play(data, target_sr)
             sd.wait()  # Wait until playback is done
 
             # Cleanup
@@ -2559,7 +2839,7 @@ class LLMWorker(QThread):
                         else:
                             result = f"Local LLM Error: {resp.status_code}"
 
-                    elif provider in ["gemini", "groq", "claude", "openai", "xai"] and frame is not None:
+                    elif provider in ["gemini", "groq", "claude", "openai", "xai", "local_vlm"] and frame is not None:
                         # Use Vision LLM API with image
                         image_base64 = VisionLLMClient.encode_image(frame)
 

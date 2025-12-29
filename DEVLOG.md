@@ -42,6 +42,53 @@
 
 ## 개발 이력
 
+### [2025-12-29] v1.2.1 - 오디오 시스템 설정 완료
+
+#### 완료된 기능
+
+10. **TTS 오디오 출력 시스템 구성**
+    - 파일: `production_app.py`, `~/.asoundrc`, `~/.config/pulse/default.pa`
+    - 설명: OpenAI TTS API 음성 출력을 위한 오디오 시스템 완전 구성
+    - 설정 내용:
+      | 항목 | 설정 |
+      |------|------|
+      | 출력 장치 | HDMI1 (hw:2,0) - HDMI2 포트 연결 |
+      | 입력 장치 | Microsoft LifeCam HD-3000 USB 마이크 |
+      | 샘플레이트 | 48000Hz |
+      | 채널 | 모노→스테레오 변환 |
+    - 구현 내용:
+      - sounddevice 장치 이름 기반 설정 (인덱스 변경 대응)
+        ```python
+        sd.default.device = ('LifeCam', 'rockchip-hdmi1')
+        sd.default.samplerate = 48000
+        ```
+      - PulseAudio 기본 출력 HDMI1 설정 (`~/.config/pulse/default.pa`)
+      - autostart 스크립트 추가 (`~/.config/autostart/audio-setup.desktop`)
+      - ALSA dmix 설정 추가 (`~/.asoundrc`) - 동시 재생 지원
+    - 참고:
+      - 장치 인덱스는 재부팅 시 변경될 수 있어 이름 기반 매칭 사용
+      - 일반적으로 오디오 포커스 정책에 따라 한 번에 하나의 앱만 재생
+
+---
+
+### [2025-12-28] v1.2.0 - RK3588 VLM 직접 NPU 추론
+
+#### 완료된 기능
+
+9. **RK3588 NPU 직접 VLM 추론 연동**
+   - 파일: `production_app.py`, `rkllm_binding.py`, `ztu_somemodelruntime_rknnlite2.py`
+   - 설명: HTTP API 서버 없이 RK3588 NPU에서 직접 VLM 추론 수행
+   - 모델: Qwen2.5-VL-3B-Instruct-RKLLM (4.95GB)
+   - 구현 내용:
+     - `RK3588LocalVLM` 싱글톤 클래스 추가
+     - Vision Encoder (RKNN) + LLM (RKLLM) 통합
+     - 지연 로딩 (첫 질문 시 모델 로드)
+   - 성능:
+     - 첫 추론: ~100초 (모델 로딩 포함)
+     - 이후 추론: ~10-15초 (Vision 4초 + LLM 생성)
+
+---
+
 ### [2025-12-28] v1.1.0 - RK3588 로컬 VLM 지원
 
 #### 완료된 기능
@@ -278,6 +325,11 @@ cd /home/orangepi/dual_npu_demo && ./run_production.sh
 | 2025-12-28 | Claude AI | VLM 모델 다운로드 (Qwen2-VL-2B, MiniCPM-V-2.6) |
 | 2025-12-28 | Claude AI | RKNPU 0.9.8 드라이버 설치 준비 |
 | 2025-12-28 | Claude AI | 프로젝트 외장 드라이브로 이동 (/mnt/external/) |
+| 2025-12-28 | Claude AI | RKNPU 0.9.8 드라이버 설치 완료 및 테스트 |
+| 2025-12-28 | Claude AI | RKLLM 1.2.1 런타임 설치 (ezrknn-llm) |
+| 2025-12-28 | Claude AI | 텍스트 LLM 테스트 성공 (Qwen3-0.6B, 31 tokens/s) |
+| 2025-12-29 | Claude AI | TTS 오디오 출력 시스템 구성 (HDMI1, USB 마이크) |
+| 2025-12-29 | Claude AI | PulseAudio/ALSA dmix 설정 완료 |
 
 ---
 
