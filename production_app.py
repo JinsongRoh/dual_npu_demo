@@ -3291,6 +3291,114 @@ class DXM1FaceDetector:
 
         return result
 
+    def analyze_emotion_vlm(self, frame, face_box):
+        """
+        VLM을 사용하여 얼굴 감정 분석
+
+        Args:
+            frame: 원본 이미지 (BGR)
+            face_box: [x1, y1, x2, y2] 얼굴 영역
+
+        Returns:
+            str: 감정 레이블 (happy, sad, angry, surprised, neutral, fear, disgust)
+        """
+        try:
+            x1, y1, x2, y2 = face_box
+
+            # 얼굴 영역에 여유 공간 추가 (더 정확한 분석을 위해)
+            h, w = frame.shape[:2]
+            pad_x = int((x2 - x1) * 0.2)
+            pad_y = int((y2 - y1) * 0.2)
+            x1 = max(0, x1 - pad_x)
+            y1 = max(0, y1 - pad_y)
+            x2 = min(w, x2 + pad_x)
+            y2 = min(h, y2 + pad_y)
+
+            # 얼굴 크롭
+            face_crop = frame[y1:y2, x1:x2]
+            if face_crop.size == 0:
+                return None
+
+            # Base64 인코딩
+            _, buffer = cv2.imencode('.jpg', face_crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            face_base64 = base64.b64encode(buffer).decode('utf-8')
+
+            # VLM 프롬프트
+            prompt = """Analyze this person's facial expression and emotion.
+Reply with ONLY ONE word from: happy, sad, angry, surprised, neutral, fear, disgust
+Just the emotion word, nothing else."""
+
+            # VLM 호출
+            result = VisionLLMClient.call_local_vlm(face_base64, prompt, "qwen2.5-vl-3b")
+
+            if result:
+                # 응답에서 감정 추출
+                result_lower = result.lower().strip()
+                emotions = ['happy', 'sad', 'angry', 'surprised', 'neutral', 'fear', 'disgust']
+                for emotion in emotions:
+                    if emotion in result_lower:
+                        return emotion.capitalize()
+                # 매칭되지 않으면 첫 단어 반환
+                first_word = result_lower.split()[0] if result_lower else 'neutral'
+                return first_word.capitalize()[:10]
+
+            return None
+
+        except Exception as e:
+            print(f"[Face] Emotion analysis error: {e}")
+            return None
+
+
+class EmotionAnalyzerThread(QThread):
+    """
+    백그라운드에서 감정 분석을 수행하는 스레드
+    VLM 추론이 느리므로 별도 스레드에서 처리
+    """
+    emotion_ready = pyqtSignal(int, str)  # face_index, emotion
+
+    def __init__(self, face_detector):
+        super().__init__()
+        self.face_detector = face_detector
+        self.running = True
+        self.pending_analysis = None
+        self.lock = threading.Lock()
+
+    def request_analysis(self, frame, faces):
+        """감정 분석 요청"""
+        with self.lock:
+            if faces:
+                # 가장 큰 얼굴만 분석 (리소스 절약)
+                largest_idx = 0
+                largest_area = 0
+                for i, face in enumerate(faces):
+                    x1, y1, x2, y2 = face['box']
+                    area = (x2 - x1) * (y2 - y1)
+                    if area > largest_area:
+                        largest_area = area
+                        largest_idx = i
+
+                self.pending_analysis = (frame.copy(), faces[largest_idx]['box'], largest_idx)
+
+    def run(self):
+        while self.running:
+            analysis_data = None
+
+            with self.lock:
+                if self.pending_analysis:
+                    analysis_data = self.pending_analysis
+                    self.pending_analysis = None
+
+            if analysis_data:
+                frame, face_box, face_idx = analysis_data
+                emotion = self.face_detector.analyze_emotion_vlm(frame, face_box)
+                if emotion:
+                    self.emotion_ready.emit(face_idx, emotion)
+
+            time.sleep(0.1)
+
+    def stop(self):
+        self.running = False
+
 
 class SystemMonitor(QThread):
     stats_updated = pyqtSignal(dict)
@@ -3709,6 +3817,10 @@ class ProductionApp(QMainWindow):
         self.detector = None
         self.pose_detector = None                    # 포즈/제스처 감지기
         self.face_detector = None                    # 얼굴 검출기 (SCRFD)
+        self.emotion_analyzer = None                 # 감정 분석 스레드
+        self.last_emotion = None                     # 마지막 분석된 감정
+        self.last_emotion_time = 0                   # 마지막 감정 분석 시간
+        self.emotion_analysis_interval = 5.0         # 감정 분석 간격 (초)
         self.detection_mode = 'none'                 # 감지 모드: 'none', 'object', 'pose', 'face'
         self.current_gestures = []                   # 현재 감지된 제스처
         self.current_faces = []                      # 현재 감지된 얼굴
@@ -3878,7 +3990,7 @@ class ProductionApp(QMainWindow):
             QPushButton:hover { background-color: #e74c3c; color: white; }
         """)
         self.face_btn.clicked.connect(self.toggle_face_detection)
-        self.face_btn.setToolTip("SCRFD 얼굴 검출 (MIT 라이선스)")
+        self.face_btn.setToolTip("얼굴 검출 + VLM 감정 분석 (BSD/MIT 라이선스)")
         mode_layout.addWidget(self.face_btn)
 
         mode_layout.addStretch()
@@ -4343,9 +4455,14 @@ class ProductionApp(QMainWindow):
         msg.exec_()
 
     def toggle_face_detection(self):
-        """얼굴/감정 감지 토글 - SCRFD 모델 사용 (MIT 라이선스)"""
+        """얼굴/감정 감지 토글 - OpenCV Haar Cascade + VLM 감정 분석"""
         if self.detection_mode == 'face':
             self.set_detection_mode('none')
+            # 감정 분석 스레드 중지
+            if self.emotion_analyzer:
+                self.emotion_analyzer.stop()
+                self.emotion_analyzer.wait()
+                self.emotion_analyzer = None
         else:
             # 얼굴 검출기 초기화 (필요한 경우)
             if self.face_detector is None:
@@ -4356,11 +4473,28 @@ class ProductionApp(QMainWindow):
                     msg.setIcon(QMessageBox.Warning)
                     msg.setWindowTitle("초기화 실패")
                     msg.setText("얼굴 검출기 초기화에 실패했습니다.")
-                    msg.setInformativeText("SCRFD 모델이 올바르게 설치되었는지 확인하세요.")
+                    msg.setInformativeText("OpenCV Haar Cascade 로드에 실패했습니다.")
                     msg.exec_()
                     self.face_detector = None
                     return
+
+            # 감정 분석 스레드 초기화
+            if self.emotion_analyzer is None:
+                self.emotion_analyzer = EmotionAnalyzerThread(self.face_detector)
+                self.emotion_analyzer.emotion_ready.connect(self.on_emotion_ready)
+                self.emotion_analyzer.start()
+                print("[Emotion] Analyzer thread started")
+
             self.set_detection_mode('face')
+
+    def on_emotion_ready(self, face_idx, emotion):
+        """감정 분석 결과 콜백"""
+        self.last_emotion = emotion
+        self.last_emotion_time = time.time()
+        print(f"[Emotion] Face {face_idx+1}: {emotion}")
+        # 현재 얼굴 목록에 감정 업데이트
+        if face_idx < len(self.current_faces):
+            self.current_faces[face_idx]['emotion'] = emotion
 
     def init_workers(self):
         self.sys_monitor = SystemMonitor()
@@ -4461,25 +4595,39 @@ class ProductionApp(QMainWindow):
                     self.det_list_label.setText("Gestures: None")
 
         elif self.detection_mode == 'face':
-            # 얼굴/감정 감지 모드 - SCRFD 모델 사용 (MIT 라이선스)
+            # 얼굴/감정 감지 모드 - OpenCV Haar Cascade + VLM 감정 분석
             if self.face_detector and self.face_detector.initialized:
                 t0 = time.time()
                 faces, result_frame = self.face_detector.detect(frame)
                 self.inference_time = (time.time() - t0) * 1000
 
+                # 이전 감정 결과 유지 (캐싱)
+                if self.last_emotion and len(faces) > 0:
+                    # 첫 번째 얼굴에 마지막 감정 적용 (5초 이내인 경우)
+                    if time.time() - self.last_emotion_time < self.emotion_analysis_interval + 2:
+                        faces[0]['emotion'] = self.last_emotion
+
                 self.current_faces = faces
                 self.det_count_label.setText(f"Faces: {len(faces)}")
 
                 if faces:
+                    # 주기적으로 감정 분석 요청
+                    if (self.emotion_analyzer and
+                        time.time() - self.last_emotion_time >= self.emotion_analysis_interval):
+                        self.emotion_analyzer.request_analysis(frame, faces)
+
                     face_info = []
                     for i, face in enumerate(faces):
                         score = face['score']
                         emotion = face.get('emotion', '')
-                        info = f"Face{i+1}({score:.0%})"
+                        info = f"Face{i+1}"
                         if emotion:
                             info += f"-{emotion}"
                         face_info.append(info)
                     self.det_list_label.setText(", ".join(face_info[:3]))
+
+                    # 결과 프레임 재생성 (감정 정보 포함)
+                    result_frame = self.face_detector.visualize(frame, faces)
                 else:
                     self.det_list_label.setText("Faces: None")
             else:
@@ -4929,6 +5077,12 @@ class ProductionApp(QMainWindow):
             self.auto_desc_worker.stop()
             self.auto_desc_worker.quit()
             self.auto_desc_worker.wait()
+
+        # Stop Emotion Analyzer thread
+        if self.emotion_analyzer:
+            self.emotion_analyzer.stop()
+            self.emotion_analyzer.quit()
+            self.emotion_analyzer.wait()
 
         if self.cap:
             self.cap.release()

@@ -73,9 +73,11 @@
   - 다중 얼굴 동시 검출 지원
   - UI Face/Emotion 버튼 연동
 
-- [ ] 감정 분석 기능 추가 ⬅️ 다음 작업
-  - VLM 연동 또는 별도 감정 인식 모델 적용
-  - DeepFace (MIT 라이선스) 또는 FER 라이브러리 고려
+- [x] 감정 분석 기능 추가 ✅ 완료 (2025-12-31)
+  - VLM (Qwen2.5-VL-3B) 연동 감정 분석
+  - 7가지 감정 분류: happy, sad, angry, surprised, neutral, fear, disgust
+  - EmotionAnalyzerThread 백그라운드 처리
+  - 5초 간격 주기적 분석
 
 - [ ] 다중 카메라 지원
 
