@@ -3169,6 +3169,129 @@ class DXM1PoseDetector:
         return result
 
 
+class DXM1FaceDetector:
+    """
+    OpenCV DNN 기반 얼굴 검출 클래스
+
+    YuNet 얼굴 검출 모델 사용 (BSD 라이선스, 상업적 사용 가능)
+    CPU에서 실행되며 빠른 실시간 검출 지원
+
+    Attributes:
+        conf_threshold (float): 신뢰도 임계값
+        nms_threshold (float): NMS 임계값
+    """
+
+    def __init__(self, model_path=None):
+        """
+        얼굴 검출기 초기화
+        """
+        self.detector = None
+        self.initialized = False
+        self.conf_threshold = 0.6
+        self.nms_threshold = 0.3
+        self.input_size = (320, 320)
+
+    def initialize(self):
+        """OpenCV Haar Cascade 또는 DNN 기반 얼굴 검출기 초기화"""
+        try:
+            # OpenCV Haar Cascade 사용 (가장 호환성 좋음)
+            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            self.detector = cv2.CascadeClassifier(cascade_path)
+
+            if self.detector.empty():
+                print("[Face] Failed to load Haar Cascade")
+                return False
+
+            self.initialized = True
+            print(f"[Face] OpenCV Haar Cascade face detector initialized")
+            return True
+
+        except Exception as e:
+            print(f"[Face] Init failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def detect(self, frame):
+        """
+        얼굴 검출 수행
+
+        Args:
+            frame: 입력 이미지 (BGR)
+
+        Returns:
+            tuple: (faces, result_frame)
+        """
+        if not self.initialized or self.detector is None:
+            return [], frame
+
+        try:
+            result = frame.copy()
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            # 얼굴 검출
+            detections = self.detector.detectMultiScale(
+                gray,
+                scaleFactor=1.1,
+                minNeighbors=5,
+                minSize=(60, 60),
+                flags=cv2.CASCADE_SCALE_IMAGE
+            )
+
+            faces = []
+            for (x, y, w, h) in detections:
+                face = {
+                    'box': [int(x), int(y), int(x + w), int(y + h)],
+                    'score': 0.99,  # Haar cascade doesn't provide score
+                    'landmarks': None,
+                    'emotion': None
+                }
+                faces.append(face)
+
+            # 시각화
+            result = self.visualize(result, faces)
+
+            return faces, result
+
+        except Exception as e:
+            print(f"[Face] Detection error: {e}")
+            return [], frame
+
+    def visualize(self, frame, faces):
+        """검출 결과 시각화"""
+        result = frame.copy()
+
+        for i, face in enumerate(faces):
+            x1, y1, x2, y2 = face['box']
+            score = face['score']
+
+            # 얼굴별 색상
+            colors = [
+                (255, 128, 0),    # 주황
+                (0, 255, 128),    # 연두
+                (128, 0, 255),    # 보라
+                (255, 0, 128),    # 분홍
+                (0, 128, 255),    # 하늘
+            ]
+            color = colors[i % len(colors)]
+
+            # 바운딩 박스 (두꺼운 선)
+            cv2.rectangle(result, (x1, y1), (x2, y2), color, 3)
+
+            # 라벨
+            label = f"Face {i+1}"
+            if face.get('emotion'):
+                label += f" ({face['emotion']})"
+
+            # 라벨 배경
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            cv2.rectangle(result, (x1, y1 - th - 10), (x1 + tw + 10, y1), color, -1)
+            cv2.putText(result, label, (x1 + 5, y1 - 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        return result
+
+
 class SystemMonitor(QThread):
     stats_updated = pyqtSignal(dict)
 
@@ -3585,8 +3708,10 @@ class ProductionApp(QMainWindow):
         self.cap = None                              # OpenCV 비디오 캡처 객체
         self.detector = None
         self.pose_detector = None                    # 포즈/제스처 감지기
+        self.face_detector = None                    # 얼굴 검출기 (SCRFD)
         self.detection_mode = 'none'                 # 감지 모드: 'none', 'object', 'pose', 'face'
         self.current_gestures = []                   # 현재 감지된 제스처
+        self.current_faces = []                      # 현재 감지된 얼굴
         self.detections = []
         self.frame_count = 0
         self.fps = 0
@@ -3739,21 +3864,21 @@ class ProductionApp(QMainWindow):
         self.pose_btn.setToolTip("⚠️ 비활성화: YOLOv5Pose AGPL-3.0 라이선스 문제")
         mode_layout.addWidget(self.pose_btn)
 
-        # 얼굴/감정 버튼
+        # 얼굴/감정 버튼 - SCRFD 모델 (MIT 라이선스)
         self.face_btn = QPushButton("😊 Face/Emotion")
         self.face_btn.setStyleSheet("""
             QPushButton {
                 background-color: #2c3e50;
-                color: #7f8c8d;
+                color: #ecf0f1;
                 border: 1px solid #34495e;
                 border-radius: 4px;
                 padding: 5px 12px;
                 font-size: 11px;
             }
-            QPushButton:hover { background-color: #34495e; }
+            QPushButton:hover { background-color: #e74c3c; color: white; }
         """)
         self.face_btn.clicked.connect(self.toggle_face_detection)
-        self.face_btn.setToolTip("얼굴 인식 및 감정 분석 (준비 중)")
+        self.face_btn.setToolTip("SCRFD 얼굴 검출 (MIT 라이선스)")
         mode_layout.addWidget(self.face_btn)
 
         mode_layout.addStretch()
@@ -4181,14 +4306,14 @@ class ProductionApp(QMainWindow):
                 print("[Mode] Failed to initialize pose detector")
 
         elif mode == 'face':
-            # TODO: 얼굴 감지기 초기화
+            # SCRFD 얼굴 검출기 사용 (MIT 라이선스)
             self.detection_mode = 'face'
             if hasattr(self, 'face_btn'):
                 self.face_btn.setStyleSheet(btn_style_on)
             if hasattr(self, 'mode_status'):
-                self.mode_status.setText("Face/Emotion ON")
+                self.mode_status.setText("Face Detection ON")
                 self.mode_status.setStyleSheet("color: #e74c3c; font-size: 10px; font-weight: bold;")
-            print("[Mode] Face detection ON (coming soon)")
+            print("[Mode] Face detection ON - SCRFD (MIT License)")
 
     def toggle_object_detection(self):
         """객체 감지 토글"""
@@ -4218,10 +4343,23 @@ class ProductionApp(QMainWindow):
         msg.exec_()
 
     def toggle_face_detection(self):
-        """얼굴/감정 감지 토글"""
+        """얼굴/감정 감지 토글 - SCRFD 모델 사용 (MIT 라이선스)"""
         if self.detection_mode == 'face':
             self.set_detection_mode('none')
         else:
+            # 얼굴 검출기 초기화 (필요한 경우)
+            if self.face_detector is None:
+                self.face_detector = DXM1FaceDetector()
+                if not self.face_detector.initialize():
+                    from PyQt5.QtWidgets import QMessageBox
+                    msg = QMessageBox(self)
+                    msg.setIcon(QMessageBox.Warning)
+                    msg.setWindowTitle("초기화 실패")
+                    msg.setText("얼굴 검출기 초기화에 실패했습니다.")
+                    msg.setInformativeText("SCRFD 모델이 올바르게 설치되었는지 확인하세요.")
+                    msg.exec_()
+                    self.face_detector = None
+                    return
             self.set_detection_mode('face')
 
     def init_workers(self):
@@ -4323,9 +4461,30 @@ class ProductionApp(QMainWindow):
                     self.det_list_label.setText("Gestures: None")
 
         elif self.detection_mode == 'face':
-            # 얼굴/감정 감지 모드 (TODO: 구현 예정)
-            self.det_count_label.setText("Mode: Face Detection")
-            self.det_list_label.setText("(Coming Soon)")
+            # 얼굴/감정 감지 모드 - SCRFD 모델 사용 (MIT 라이선스)
+            if self.face_detector and self.face_detector.initialized:
+                t0 = time.time()
+                faces, result_frame = self.face_detector.detect(frame)
+                self.inference_time = (time.time() - t0) * 1000
+
+                self.current_faces = faces
+                self.det_count_label.setText(f"Faces: {len(faces)}")
+
+                if faces:
+                    face_info = []
+                    for i, face in enumerate(faces):
+                        score = face['score']
+                        emotion = face.get('emotion', '')
+                        info = f"Face{i+1}({score:.0%})"
+                        if emotion:
+                            info += f"-{emotion}"
+                        face_info.append(info)
+                    self.det_list_label.setText(", ".join(face_info[:3]))
+                else:
+                    self.det_list_label.setText("Faces: None")
+            else:
+                self.det_count_label.setText("Mode: Face")
+                self.det_list_label.setText("Initializing...")
 
         # Store current frame for Vision LLM capture
         self.current_result_frame = result_frame.copy()

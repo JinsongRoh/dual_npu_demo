@@ -1,6 +1,6 @@
 # TODO List - Dual NPU Demo
 
-> 마지막 업데이트: 2025-12-30
+> 마지막 업데이트: 2025-12-31
 
 ## 완료된 항목 (Completed)
 
@@ -67,7 +67,16 @@
   - YOLOX-Pose 또는 RTMPose DX-M1 변환 필요
   - 변환 후 포즈/제스처 기능 재활성화
 
-- [ ] 얼굴 인식 및 감정 분석 구현
+- [x] 얼굴 인식 구현 ✅ 완료 (2025-12-31)
+  - DXM1FaceDetector 클래스 추가 (OpenCV Haar Cascade)
+  - BSD 라이선스 (상업적 사용 가능)
+  - 다중 얼굴 동시 검출 지원
+  - UI Face/Emotion 버튼 연동
+
+- [ ] 감정 분석 기능 추가 ⬅️ 다음 작업
+  - VLM 연동 또는 별도 감정 인식 모델 적용
+  - DeepFace (MIT 라이선스) 또는 FER 라이브러리 고려
+
 - [ ] 다중 카메라 지원
 
 ## 참고 사항
