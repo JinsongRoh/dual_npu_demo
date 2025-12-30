@@ -42,6 +42,39 @@
 
 ## 개발 이력
 
+### [2025-12-31] v1.6.0 - MediaPipe Pose 포즈/제스처 기능 활성화
+
+#### 완료된 기능
+
+18. **MediaPipePoseDetector 클래스 구현**
+    - 파일: `production_app.py` (2886-3082줄)
+    - 설명: Google MediaPipe Pose 기반 실시간 포즈 추정
+    - 라이선스: **Apache 2.0** (상업적 사용 가능)
+    - 특징:
+      - TensorFlow Lite XNNPACK 최적화 (~30 FPS on ARM64)
+      - COCO 17 키포인트 형식 출력
+      - 기존 GestureRecognizer와 완전 호환
+      - 스켈레톤 시각화 (녹색 연결선)
+      - 8가지 제스처 인식 지원
+    - 지원 제스처:
+      - hands_up: 양손 들기
+      - left_hand_up / right_hand_up: 한손 들기
+      - waving: 손 흔들기
+      - pointing_left / pointing_right: 방향 가리키기
+      - arms_crossed: 팔짱 끼기
+      - t_pose: T 포즈
+
+#### 기술 구현
+- MediaPipe → COCO 키포인트 매핑 (17개 관절)
+- model_complexity=0 (Lite 모델) 사용으로 실시간 성능
+- 비동기 추론 지원
+
+#### 라이선스 문제 해결
+- 기존: YOLOv5Pose (AGPL-3.0) → 비활성화
+- 변경: MediaPipe Pose (Apache 2.0) → 활성화
+
+---
+
 ### [2025-12-31] v1.5.0 - VLM 기반 감정 분석 기능 추가
 
 #### 완료된 기능

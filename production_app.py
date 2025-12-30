@@ -2883,6 +2883,205 @@ class GestureRecognizer:
         return {'is_waving': False, 'confidence': 0.0, 'hand': None}
 
 
+class MediaPipePoseDetector:
+    """
+    MediaPipe 기반 포즈 추정 클래스 (Apache 2.0 라이선스)
+
+    Google MediaPipe Pose를 사용하여 사람의 관절 위치를 감지합니다.
+    COCO 형식의 17개 키포인트로 변환하여 제스처 인식과 호환됩니다.
+
+    Attributes:
+        model_complexity (int): 모델 복잡도 (0=Lite, 1=Full, 2=Heavy)
+        min_detection_confidence (float): 최소 검출 신뢰도
+        min_tracking_confidence (float): 최소 추적 신뢰도
+    """
+
+    # MediaPipe -> COCO 키포인트 매핑
+    MP_TO_COCO = {
+        0: 0,   # nose -> nose
+        2: 1,   # left_eye -> left_eye
+        5: 2,   # right_eye -> right_eye
+        7: 3,   # left_ear -> left_ear
+        8: 4,   # right_ear -> right_ear
+        11: 5,  # left_shoulder -> left_shoulder
+        12: 6,  # right_shoulder -> right_shoulder
+        13: 7,  # left_elbow -> left_elbow
+        14: 8,  # right_elbow -> right_elbow
+        15: 9,  # left_wrist -> left_wrist
+        16: 10, # right_wrist -> right_wrist
+        23: 11, # left_hip -> left_hip
+        24: 12, # right_hip -> right_hip
+        25: 13, # left_knee -> left_knee
+        26: 14, # right_knee -> right_knee
+        27: 15, # left_ankle -> left_ankle
+        28: 16, # right_ankle -> right_ankle
+    }
+
+    def __init__(self):
+        """포즈 감지기 초기화"""
+        self.pose = None
+        self.initialized = False
+        self.model_complexity = 0  # Lite model for speed
+        self.min_detection_confidence = 0.5
+        self.min_tracking_confidence = 0.5
+
+        # 제스처 인식기
+        self.gesture_recognizer = GestureRecognizer()
+
+        # 스켈레톤 연결 (시각화용)
+        self.skeleton_connections = [
+            (0, 1), (0, 2), (1, 3), (2, 4),  # 얼굴
+            (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # 상체
+            (5, 11), (6, 12), (11, 12),  # 몸통
+            (11, 13), (13, 15), (12, 14), (14, 16)  # 하체
+        ]
+
+    def initialize(self):
+        """MediaPipe Pose 초기화"""
+        try:
+            import mediapipe as mp
+            self.mp_pose = mp.solutions.pose
+            self.mp_drawing = mp.solutions.drawing_utils
+
+            self.pose = self.mp_pose.Pose(
+                static_image_mode=False,
+                model_complexity=self.model_complexity,
+                smooth_landmarks=True,
+                min_detection_confidence=self.min_detection_confidence,
+                min_tracking_confidence=self.min_tracking_confidence
+            )
+
+            self.initialized = True
+            print(f"[MediaPipe Pose] Initialized (complexity={self.model_complexity})")
+            return True
+
+        except Exception as e:
+            print(f"[MediaPipe Pose] Init failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def detect(self, frame):
+        """
+        포즈 감지 수행
+
+        Args:
+            frame: 입력 이미지 (BGR)
+
+        Returns:
+            tuple: (poses, result_frame, gestures)
+        """
+        if not self.initialized or self.pose is None:
+            return [], frame, []
+
+        try:
+            h, w = frame.shape[:2]
+            result_frame = frame.copy()
+
+            # BGR -> RGB 변환
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            # MediaPipe 추론
+            results = self.pose.process(rgb_frame)
+
+            poses = []
+            gestures = []
+
+            if results.pose_landmarks:
+                # MediaPipe 키포인트를 COCO 형식으로 변환
+                landmarks = results.pose_landmarks.landmark
+                coco_keypoints = []
+
+                for coco_idx in range(17):
+                    # COCO 인덱스에 해당하는 MediaPipe 인덱스 찾기
+                    mp_idx = None
+                    for mp_i, coco_i in self.MP_TO_COCO.items():
+                        if coco_i == coco_idx:
+                            mp_idx = mp_i
+                            break
+
+                    if mp_idx is not None and mp_idx < len(landmarks):
+                        lm = landmarks[mp_idx]
+                        x = int(lm.x * w)
+                        y = int(lm.y * h)
+                        conf = lm.visibility
+                        coco_keypoints.append((x, y, conf))
+                    else:
+                        coco_keypoints.append((0, 0, 0))
+
+                # 바운딩 박스 계산
+                xs = [kp[0] for kp in coco_keypoints if kp[2] > 0.3]
+                ys = [kp[1] for kp in coco_keypoints if kp[2] > 0.3]
+                if xs and ys:
+                    x1, y1 = max(0, min(xs) - 20), max(0, min(ys) - 20)
+                    x2, y2 = min(w, max(xs) + 20), min(h, max(ys) + 20)
+                    box = [x1, y1, x2, y2]
+                else:
+                    box = [0, 0, w, h]
+
+                pose_data = {
+                    'keypoints': coco_keypoints,
+                    'box': box,
+                    'score': sum(kp[2] for kp in coco_keypoints) / 17
+                }
+                poses.append(pose_data)
+
+                # 제스처 인식
+                gesture = self.gesture_recognizer.recognize(coco_keypoints)
+                if gesture['gesture'] != 'unknown':
+                    gesture['person_idx'] = 0
+                    gestures.append(gesture)
+
+                # 시각화
+                result_frame = self.visualize(result_frame, poses, gestures)
+
+            return poses, result_frame, gestures
+
+        except Exception as e:
+            print(f"[MediaPipe Pose] Detection error: {e}")
+            import traceback
+            traceback.print_exc()
+            return [], frame, []
+
+    def visualize(self, frame, poses, gestures):
+        """포즈 시각화"""
+        result = frame.copy()
+
+        for pose in poses:
+            keypoints = pose['keypoints']
+
+            # 스켈레톤 그리기
+            for conn in self.skeleton_connections:
+                pt1_idx, pt2_idx = conn
+                if pt1_idx < len(keypoints) and pt2_idx < len(keypoints):
+                    pt1 = keypoints[pt1_idx]
+                    pt2 = keypoints[pt2_idx]
+                    if pt1[2] > 0.3 and pt2[2] > 0.3:
+                        cv2.line(result, (pt1[0], pt1[1]), (pt2[0], pt2[1]),
+                                (0, 255, 0), 2)
+
+            # 키포인트 그리기
+            for i, kp in enumerate(keypoints):
+                if kp[2] > 0.3:
+                    color = (0, 0, 255) if i < 5 else (255, 0, 0)  # 얼굴: 빨강, 몸: 파랑
+                    cv2.circle(result, (kp[0], kp[1]), 5, color, -1)
+
+        # 제스처 표시
+        for gesture in gestures:
+            text = f"{gesture['gesture'].replace('_', ' ').title()}"
+            cv2.putText(result, text, (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+
+        return result
+
+    def close(self):
+        """리소스 해제"""
+        if self.pose:
+            self.pose.close()
+            self.pose = None
+            self.initialized = False
+
+
 class DXM1PoseDetector:
     """
     DeepX DX-M1 NPU를 사용한 포즈 추정 클래스
@@ -3959,21 +4158,21 @@ class ProductionApp(QMainWindow):
         self.object_btn.setToolTip("YOLOX-S 객체 감지 (80 클래스)")
         mode_layout.addWidget(self.object_btn)
 
-        # 포즈/제스처 버튼 (라이선스 문제로 비활성화)
+        # 포즈/제스처 버튼 - MediaPipe Pose (Apache 2.0 라이선스)
         self.pose_btn = QPushButton("🦴 Pose/Gesture")
         self.pose_btn.setStyleSheet("""
             QPushButton {
-                background-color: #1a1a2e;
-                color: #555555;
-                border: 1px solid #333344;
+                background-color: #2c3e50;
+                color: #ecf0f1;
+                border: 1px solid #9b59b6;
                 border-radius: 4px;
                 padding: 5px 12px;
                 font-size: 11px;
             }
-            QPushButton:hover { background-color: #252538; color: #666666; }
+            QPushButton:hover { background-color: #9b59b6; color: white; }
         """)
         self.pose_btn.clicked.connect(self.toggle_pose_detection)
-        self.pose_btn.setToolTip("⚠️ 비활성화: YOLOv5Pose AGPL-3.0 라이선스 문제")
+        self.pose_btn.setToolTip("MediaPipe Pose 제스처 인식 (Apache 2.0 라이선스)")
         mode_layout.addWidget(self.pose_btn)
 
         # 얼굴/감정 버튼 - SCRFD 모델 (MIT 라이선스)
@@ -4333,15 +4532,15 @@ class ProductionApp(QMainWindow):
         self.pose_detector = None
 
     def init_pose_detector(self):
-        """포즈 감지기 초기화 (모드 전환 시 호출)"""
+        """포즈 감지기 초기화 (모드 전환 시 호출) - MediaPipe 사용"""
         if self.pose_detector is None:
-            pose_model_path = "/home/orangepi/model_for_demo/YOLOv5Pose640_1.dxnn"
-            self.pose_detector = DXM1PoseDetector(pose_model_path)
+            # MediaPipe Pose 사용 (Apache 2.0 라이선스)
+            self.pose_detector = MediaPipePoseDetector()
             if self.pose_detector.initialize():
-                print("[Pose] Detector initialized successfully")
+                print("[Pose] MediaPipe Pose initialized successfully")
                 return True
             else:
-                print("[Pose] Detector initialization failed")
+                print("[Pose] MediaPipe initialization failed")
                 self.pose_detector = None
                 return False
         return True
@@ -4435,24 +4634,27 @@ class ProductionApp(QMainWindow):
             self.set_detection_mode('object')
 
     def toggle_pose_detection(self):
-        """포즈/제스처 감지 토글 - 현재 비활성화 (라이선스 문제)
-
-        YOLOv5Pose 모델은 AGPL-3.0 라이선스로 상업적 사용에 제약이 있습니다.
-        Apache 2.0 라이선스의 대안 모델(YOLOX-Pose, RTMPose)이 DX-M1용으로 준비되면 활성화됩니다.
-        """
-        # 라이선스 경고 메시지 표시
-        from PyQt5.QtWidgets import QMessageBox
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("기능 비활성화")
-        msg.setText("포즈/제스처 인식 기능이 비활성화되어 있습니다.")
-        msg.setInformativeText(
-            "YOLOv5Pose 모델은 AGPL-3.0 라이선스로 상업적 사용에 제약이 있습니다.\n\n"
-            "Apache 2.0 라이선스의 대안 모델(YOLOX-Pose, RTMPose)이 "
-            "DX-M1 NPU용으로 준비되면 이 기능이 활성화됩니다."
-        )
-        msg.setStandardButtons(QMessageBox.Ok)
-        msg.exec_()
+        """포즈/제스처 감지 토글 - MediaPipe Pose (Apache 2.0 라이선스)"""
+        if self.detection_mode == 'pose':
+            self.set_detection_mode('none')
+            # MediaPipe 리소스 해제
+            if self.pose_detector and hasattr(self.pose_detector, 'close'):
+                self.pose_detector.close()
+        else:
+            # 포즈 검출기 초기화 (MediaPipe 사용)
+            if self.pose_detector is None:
+                self.pose_detector = MediaPipePoseDetector()
+                if not self.pose_detector.initialize():
+                    from PyQt5.QtWidgets import QMessageBox
+                    msg = QMessageBox(self)
+                    msg.setIcon(QMessageBox.Warning)
+                    msg.setWindowTitle("초기화 실패")
+                    msg.setText("MediaPipe Pose 초기화에 실패했습니다.")
+                    msg.setInformativeText("mediapipe 패키지가 올바르게 설치되었는지 확인하세요.")
+                    msg.exec_()
+                    self.pose_detector = None
+                    return
+            self.set_detection_mode('pose')
 
     def toggle_face_detection(self):
         """얼굴/감정 감지 토글 - OpenCV Haar Cascade + VLM 감정 분석"""

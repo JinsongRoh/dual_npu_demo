@@ -63,9 +63,11 @@
   - UI 감지 모드 전환 버튼 추가
   - ⚠️ **라이선스 문제로 비활성화됨** (YOLOv5Pose AGPL-3.0)
 
-- [ ] Apache 2.0 포즈 모델 변환 ⬅️ 다음 작업
-  - YOLOX-Pose 또는 RTMPose DX-M1 변환 필요
-  - 변환 후 포즈/제스처 기능 재활성화
+- [x] Apache 2.0 포즈 모델 적용 ✅ 완료 (2025-12-31)
+  - MediaPipe Pose (Apache 2.0) 적용
+  - ~30 FPS 실시간 포즈 추정
+  - 8가지 제스처 인식 활성화
+  - YOLOv5Pose (AGPL) → MediaPipe Pose (Apache 2.0) 교체
 
 - [x] 얼굴 인식 구현 ✅ 완료 (2025-12-31)
   - DXM1FaceDetector 클래스 추가 (OpenCV Haar Cascade)
