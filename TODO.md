@@ -1,6 +1,21 @@
 # TODO List - Dual NPU Demo
 
 > 마지막 업데이트: 2025-12-31
+> 현재 버전: **v1.6.0**
+
+## 현재 버전 (v1.6.0) 기능 상태
+
+| 기능 | 상태 | 모델/기술 | 라이선스 |
+|------|------|-----------|----------|
+| 객체 검출 | ✅ 완료 | DX-M1 + YOLOX-S | Apache 2.0 |
+| 포즈/제스처 | ✅ 완료 | MediaPipe Pose | Apache 2.0 |
+| 얼굴 검출 | ✅ 완료 | OpenCV Haar Cascade | BSD |
+| 감정 분석 | ✅ 완료 | RK3588 VLM | Apache 2.0 |
+| Vision LLM | ✅ 완료 | Qwen2.5-VL-3B | Apache 2.0 |
+| STT | ✅ 완료 | OpenAI Whisper API | - |
+| TTS | ✅ 완료 | OpenAI TTS API | - |
+
+---
 
 ## 완료된 항목 (Completed)
 

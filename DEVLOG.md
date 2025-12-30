@@ -16,7 +16,35 @@
 | **이메일** | enjoydays@metavu.io |
 | **홈페이지** | www.metavu.io |
 | **개발 시작일** | 2025년 12월 26일 |
-| **현재 버전** | 1.0.0 |
+| **현재 버전** | **1.6.0** (2025-12-31) |
+
+---
+
+## v1.6.0 기능 요약 (Current Release)
+
+### 듀얼 NPU 아키텍처
+| NPU | 용도 | 모델 | 성능 |
+|-----|------|------|------|
+| **DX-M1** | 객체 검출 | YOLOX-S | ~216 FPS |
+| **RK3588** | Vision LLM | Qwen2.5-VL-3B | Vision 4.5s + LLM 8 tok/s |
+
+### 주요 기능
+| 기능 | 설명 | 라이선스 |
+|------|------|----------|
+| 📦 **객체 검출** | DX-M1 NPU + YOLOX-S (80 클래스) | Apache 2.0 |
+| 🦴 **포즈/제스처** | MediaPipe Pose (~30 FPS), 8가지 제스처 | Apache 2.0 |
+| 😊 **얼굴 검출** | OpenCV Haar Cascade + VLM 감정 분석 | BSD/MIT |
+| 🤖 **Vision LLM** | RK3588 NPU + Qwen2.5-VL-3B | Apache 2.0 |
+| 🎤 **STT** | OpenAI Whisper API | - |
+| 🔊 **TTS** | OpenAI TTS API | - |
+
+### 제스처 인식 (8가지)
+- hands_up, left_hand_up, right_hand_up
+- waving, pointing_left, pointing_right
+- arms_crossed, t_pose
+
+### 감정 분석 (7가지)
+- happy, sad, angry, surprised, neutral, fear, disgust
 
 ---
 
