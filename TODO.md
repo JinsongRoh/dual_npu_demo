@@ -1,6 +1,6 @@
 # TODO List - Dual NPU Demo
 
-> 마지막 업데이트: 2025-12-29
+> 마지막 업데이트: 2025-12-30
 
 ## 완료된 항목 (Completed)
 
@@ -14,17 +14,15 @@
 
 ## 진행 중 (In Progress)
 
-- [ ] STT (Speech-to-Text) 테스트
+- [x] STT (Speech-to-Text) 테스트 ✅ 완료 (2025-12-30)
   - OpenAI Whisper API 연동 완료
   - 마이크 녹음 테스트 성공
-  - 앱 내 STT 테스트 필요 (리부팅 후)
+  - 앱 내 STT 정상 동작 확인
 
 ## 알려진 이슈 (Known Issues)
 
-- NPU 메모리 충돌: DX-M1 + RKLLM VLM 동시 사용 시 크래시
-  - 에러: "failed to malloc npu memory" / "rkllm_init failed"
-  - 원인: DX-M1 객체감지와 VLM이 동시에 NPU 메모리 사용
-  - 해결: 리부팅 후 NPU 상태 초기화 필요
+- [x] NPU 메모리 충돌 ✅ 해결됨 (2025-12-30)
+  - DX-M1 + RKLLM VLM 동시 사용 정상 동작 확인
 
 ## 최근 완료 (2025-12-29 00:30)
 
@@ -59,8 +57,17 @@
 
 ## 대기 중 (Pending)
 
-- [ ] 제스처 인식 기능 구현 (YOLOX-S 모델)
-- [ ] 얼굴 인식 및 감정 분석 구현  (YOLOX-S 모델)
+- [x] 제스처 인식 기능 구현 ✅ 완료 (2025-12-30)
+  - DXM1PoseDetector 클래스 추가 (YOLOv5Pose 모델)
+  - GestureRecognizer 클래스 추가 (8가지 제스처)
+  - UI 감지 모드 전환 버튼 추가
+  - ⚠️ **라이선스 문제로 비활성화됨** (YOLOv5Pose AGPL-3.0)
+
+- [ ] Apache 2.0 포즈 모델 변환 ⬅️ 다음 작업
+  - YOLOX-Pose 또는 RTMPose DX-M1 변환 필요
+  - 변환 후 포즈/제스처 기능 재활성화
+
+- [ ] 얼굴 인식 및 감정 분석 구현
 - [ ] 다중 카메라 지원
 
 ## 참고 사항

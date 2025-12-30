@@ -42,6 +42,80 @@
 
 ## 개발 이력
 
+### [2025-12-30] v1.3.1 - 라이선스 규칙 적용 및 포즈 기능 비활성화
+
+#### 주요 변경사항
+
+14. **YOLOv5Pose 라이선스 이슈 대응**
+    - 파일: `production_app.py`
+    - 문제: YOLOv5Pose 모델이 AGPL-3.0 라이선스로 상업적 사용에 제약
+    - 조치:
+      - Pose/Gesture 버튼 클릭 시 라이선스 경고 메시지 표시
+      - 버튼 스타일을 비활성화 상태로 변경 (어두운 색상)
+      - 툴팁에 라이선스 문제 안내 추가
+    - 대안 모델 (DX-M1 변환 필요):
+      - YOLOX-Pose (Apache 2.0)
+      - RTMPose / MMPose (Apache 2.0)
+      - MediaPipe Pose (Apache 2.0)
+
+15. **개발 지침서 라이선스 규칙 추가**
+    - 파일: `DEV_GUIDELINES.md`
+    - 새 섹션: 0.7 AI 모델 라이선스 규칙
+    - 내용:
+      - 허용 라이선스: Apache 2.0, MIT, BSD-3-Clause
+      - 금지 라이선스: AGPL-3.0, GPL-3.0, CC BY-NC
+      - 모델별 라이선스 현황 표
+      - 모델 사용 전 체크리스트
+
+---
+
+### [2025-12-30] v1.3.0 - 제스처 인식 기능 추가
+
+#### 완료된 기능
+
+11. **DX-M1 감지 모드 전환 시스템**
+    - 파일: `production_app.py`
+    - 설명: DX-M1 NPU의 감지 기능을 켜고 끌 수 있는 모드 전환 시스템
+    - 지원 모드:
+      | 모드 | 설명 | 모델 |
+      |------|------|------|
+      | Camera Only | 감지 없음, 실시간 영상만 | - |
+      | Object | 객체 감지 (80 클래스) | YOLOX-S |
+      | Pose/Gesture | 포즈 및 제스처 감지 (비활성화) | YOLOv5Pose (AGPL) |
+      | Face/Emotion | 얼굴/감정 분석 (준비중) | - |
+    - UI: 비디오 패널 상단에 모드 전환 버튼 추가
+
+12. **DXM1PoseDetector 클래스** (비활성화됨 - 라이선스 문제)
+    - 파일: `production_app.py` (2886-3169줄)
+    - 설명: YOLOv5Pose 모델을 사용한 포즈 추정
+    - 기능:
+      - 17개 COCO 키포인트 감지
+      - 스켈레톤 시각화 (색상별 부위 구분)
+      - 제스처 인식 연동
+    - 모델: `/home/orangepi/model_for_demo/YOLOv5Pose640_1.dxnn`
+    - **상태**: AGPL-3.0 라이선스 문제로 비활성화
+
+13. **GestureRecognizer 클래스** (비활성화됨 - 라이선스 문제)
+    - 파일: `production_app.py` (2636-2883줄)
+    - 설명: 키포인트 기반 제스처 인식
+    - 지원 제스처 (8가지):
+      | 제스처 | 설명 |
+      |--------|------|
+      | hands_up | 양손 들기 |
+      | left_hand_up | 왼손 들기 |
+      | right_hand_up | 오른손 들기 |
+      | waving | 손 흔들기 |
+      | t_pose | T 포즈 |
+      | pointing_left | 왼쪽 가리키기 |
+      | pointing_right | 오른쪽 가리키기 |
+      | arms_crossed | 팔짱 끼기 |
+    - 특징:
+      - 제스처 히스토리 기반 안정화
+      - 손목 움직임 분석으로 흔들기 감지
+    - **상태**: YOLOv5Pose 의존으로 비활성화
+
+---
+
 ### [2025-12-29] v1.2.1 - 오디오 시스템 설정 완료
 
 #### 완료된 기능

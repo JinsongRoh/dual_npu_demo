@@ -2569,6 +2569,606 @@ class DXM1Detector:
         return result
 
 
+# =============================================================================
+# 제스처 인식 클래스 (Gesture Recognition Classes)
+# =============================================================================
+
+# COCO 포즈 키포인트 인덱스
+KEYPOINT_NAMES = [
+    'nose',           # 0
+    'left_eye',       # 1
+    'right_eye',      # 2
+    'left_ear',       # 3
+    'right_ear',      # 4
+    'left_shoulder',  # 5
+    'right_shoulder', # 6
+    'left_elbow',     # 7
+    'right_elbow',    # 8
+    'left_wrist',     # 9
+    'right_wrist',    # 10
+    'left_hip',       # 11
+    'right_hip',      # 12
+    'left_knee',      # 13
+    'right_knee',     # 14
+    'left_ankle',     # 15
+    'right_ankle'     # 16
+]
+
+# 스켈레톤 연결 정보 (시각화용)
+SKELETON_CONNECTIONS = [
+    (15, 13), (13, 11),  # 왼쪽 다리
+    (16, 14), (14, 12),  # 오른쪽 다리
+    (11, 12),            # 엉덩이
+    (5, 11), (6, 12),    # 몸통-엉덩이
+    (5, 6),              # 어깨
+    (5, 7), (7, 9),      # 왼쪽 팔
+    (6, 8), (8, 10),     # 오른쪽 팔
+    (1, 2),              # 눈
+    (0, 1), (0, 2),      # 코-눈
+    (1, 3), (2, 4),      # 눈-귀
+    (3, 5), (4, 6),      # 귀-어깨
+]
+
+# 스켈레톤 색상 (BGR)
+SKELETON_COLORS = [
+    (255, 153, 51),   # 다리 - 주황
+    (255, 153, 51),
+    (255, 153, 51),
+    (255, 153, 51),
+    (255, 51, 255),   # 엉덩이 - 핑크
+    (255, 51, 255),
+    (255, 51, 255),
+    (0, 128, 255),    # 어깨 - 파랑
+    (0, 128, 255),    # 왼팔
+    (0, 128, 255),
+    (0, 128, 255),    # 오른팔
+    (0, 128, 255),
+    (0, 255, 0),      # 얼굴 - 녹색
+    (0, 255, 0),
+    (0, 255, 0),
+    (0, 255, 0),
+    (0, 255, 0),
+    (0, 255, 0),
+    (0, 255, 0),
+]
+
+
+class GestureRecognizer:
+    """
+    키포인트 기반 제스처 인식 클래스
+
+    17개 COCO 키포인트를 분석하여 다양한 제스처를 인식합니다.
+
+    지원 제스처:
+    - hands_up: 양손 들기
+    - left_hand_up: 왼손 들기
+    - right_hand_up: 오른손 들기
+    - waving: 손 흔들기
+    - pointing_left: 왼쪽 가리키기
+    - pointing_right: 오른쪽 가리키기
+    - arms_crossed: 팔짱 끼기
+    - t_pose: T 포즈
+    """
+
+    def __init__(self):
+        """제스처 인식기 초기화"""
+        self.gesture_history = deque(maxlen=10)  # 제스처 히스토리 (안정화용)
+        self.wrist_history = deque(maxlen=15)    # 손목 위치 히스토리 (흔들기 감지용)
+        self.last_gesture = None
+        self.gesture_confidence = 0.0
+
+    def recognize(self, keypoints, confidence_threshold=0.5):
+        """
+        키포인트에서 제스처 인식
+
+        Args:
+            keypoints: 17개 키포인트 [(x, y, conf), ...]
+            confidence_threshold: 최소 신뢰도 임계값
+
+        Returns:
+            dict: {
+                'gesture': 제스처 이름,
+                'confidence': 신뢰도,
+                'details': 추가 정보
+            }
+        """
+        if keypoints is None or len(keypoints) < 17:
+            return {'gesture': 'unknown', 'confidence': 0.0, 'details': {}}
+
+        # 키포인트 추출 (신뢰도 체크)
+        kpts = {}
+        for i, name in enumerate(KEYPOINT_NAMES):
+            if i < len(keypoints):
+                x, y, conf = keypoints[i]
+                if conf >= confidence_threshold:
+                    kpts[name] = (x, y, conf)
+                else:
+                    kpts[name] = None
+            else:
+                kpts[name] = None
+
+        # 손목 위치 히스토리 업데이트 (흔들기 감지용)
+        if kpts.get('left_wrist') and kpts.get('right_wrist'):
+            self.wrist_history.append({
+                'left': kpts['left_wrist'][:2],
+                'right': kpts['right_wrist'][:2],
+                'time': time.time()
+            })
+
+        # 제스처 감지 (우선순위 순)
+        gesture_result = self._detect_gestures(kpts)
+
+        # 제스처 히스토리 업데이트 (안정화)
+        self.gesture_history.append(gesture_result['gesture'])
+
+        # 가장 빈번한 제스처 반환 (안정화)
+        if len(self.gesture_history) >= 3:
+            gesture_counts = Counter(self.gesture_history)
+            most_common = gesture_counts.most_common(1)[0]
+            if most_common[1] >= 2:  # 최소 2번 이상 감지
+                gesture_result['gesture'] = most_common[0]
+                gesture_result['confidence'] = most_common[1] / len(self.gesture_history)
+
+        self.last_gesture = gesture_result
+        return gesture_result
+
+    def _detect_gestures(self, kpts):
+        """제스처 감지 로직"""
+        result = {'gesture': 'standing', 'confidence': 0.5, 'details': {}}
+
+        # 필수 키포인트 체크
+        has_shoulders = kpts.get('left_shoulder') and kpts.get('right_shoulder')
+        has_wrists = kpts.get('left_wrist') and kpts.get('right_wrist')
+        has_elbows = kpts.get('left_elbow') and kpts.get('right_elbow')
+
+        if not has_shoulders:
+            return result
+
+        shoulder_y = (kpts['left_shoulder'][1] + kpts['right_shoulder'][1]) / 2
+        shoulder_x_left = kpts['left_shoulder'][0]
+        shoulder_x_right = kpts['right_shoulder'][0]
+        shoulder_width = abs(shoulder_x_right - shoulder_x_left)
+
+        # 1. 양손 들기 (Hands Up)
+        if has_wrists:
+            left_wrist_y = kpts['left_wrist'][1]
+            right_wrist_y = kpts['right_wrist'][1]
+            left_wrist_x = kpts['left_wrist'][0]
+            right_wrist_x = kpts['right_wrist'][0]
+
+            # 양손이 어깨보다 위에 있으면 "손 들기"
+            left_up = left_wrist_y < shoulder_y - shoulder_width * 0.3
+            right_up = right_wrist_y < shoulder_y - shoulder_width * 0.3
+
+            if left_up and right_up:
+                result = {
+                    'gesture': 'hands_up',
+                    'confidence': 0.9,
+                    'details': {'both_hands': True}
+                }
+                return result
+            elif left_up:
+                result = {
+                    'gesture': 'left_hand_up',
+                    'confidence': 0.85,
+                    'details': {'hand': 'left'}
+                }
+                return result
+            elif right_up:
+                result = {
+                    'gesture': 'right_hand_up',
+                    'confidence': 0.85,
+                    'details': {'hand': 'right'}
+                }
+                return result
+
+            # 2. 손 흔들기 (Waving) - 손목 움직임 분석
+            if len(self.wrist_history) >= 8:
+                waving = self._detect_waving()
+                if waving['is_waving']:
+                    result = {
+                        'gesture': 'waving',
+                        'confidence': waving['confidence'],
+                        'details': {'hand': waving['hand']}
+                    }
+                    return result
+
+            # 3. T 포즈 (T-Pose) - 양팔을 수평으로 벌림
+            if has_elbows:
+                # 팔꿈치와 손목이 어깨와 비슷한 높이
+                elbow_y_left = kpts['left_elbow'][1]
+                elbow_y_right = kpts['right_elbow'][1]
+
+                arms_horizontal = (
+                    abs(left_wrist_y - shoulder_y) < shoulder_width * 0.4 and
+                    abs(right_wrist_y - shoulder_y) < shoulder_width * 0.4 and
+                    abs(elbow_y_left - shoulder_y) < shoulder_width * 0.4 and
+                    abs(elbow_y_right - shoulder_y) < shoulder_width * 0.4
+                )
+
+                # 손목이 어깨보다 바깥에 있어야 함
+                arms_spread = (
+                    left_wrist_x < shoulder_x_left - shoulder_width * 0.5 and
+                    right_wrist_x > shoulder_x_right + shoulder_width * 0.5
+                )
+
+                if arms_horizontal and arms_spread:
+                    result = {
+                        'gesture': 't_pose',
+                        'confidence': 0.9,
+                        'details': {}
+                    }
+                    return result
+
+            # 4. 포인팅 (Pointing)
+            if has_elbows:
+                # 한 팔이 뻗어있고 다른 팔은 내려있음
+                left_arm_extended = (
+                    abs(kpts['left_elbow'][1] - left_wrist_y) < shoulder_width * 0.3 and
+                    left_wrist_x < shoulder_x_left - shoulder_width * 0.5
+                )
+                right_arm_extended = (
+                    abs(kpts['right_elbow'][1] - right_wrist_y) < shoulder_width * 0.3 and
+                    right_wrist_x > shoulder_x_right + shoulder_width * 0.5
+                )
+
+                if left_arm_extended and not right_arm_extended:
+                    result = {
+                        'gesture': 'pointing_left',
+                        'confidence': 0.8,
+                        'details': {'direction': 'left'}
+                    }
+                    return result
+                elif right_arm_extended and not left_arm_extended:
+                    result = {
+                        'gesture': 'pointing_right',
+                        'confidence': 0.8,
+                        'details': {'direction': 'right'}
+                    }
+                    return result
+
+            # 5. 팔짱 끼기 (Arms Crossed)
+            if has_elbows:
+                # 손목이 반대편 어깨 근처에 있음
+                arms_crossed = (
+                    abs(left_wrist_x - shoulder_x_right) < shoulder_width * 0.5 and
+                    abs(right_wrist_x - shoulder_x_left) < shoulder_width * 0.5 and
+                    left_wrist_y > shoulder_y and
+                    right_wrist_y > shoulder_y
+                )
+
+                if arms_crossed:
+                    result = {
+                        'gesture': 'arms_crossed',
+                        'confidence': 0.85,
+                        'details': {}
+                    }
+                    return result
+
+        return result
+
+    def _detect_waving(self):
+        """손목 움직임으로 흔들기 감지"""
+        if len(self.wrist_history) < 8:
+            return {'is_waving': False, 'confidence': 0.0, 'hand': None}
+
+        # 최근 8개 프레임의 손목 위치 분석
+        recent = list(self.wrist_history)[-8:]
+
+        for hand in ['left', 'right']:
+            x_positions = [h[hand][0] for h in recent if h.get(hand)]
+            if len(x_positions) < 6:
+                continue
+
+            # 방향 변화 카운트 (좌우 흔들기)
+            direction_changes = 0
+            for i in range(1, len(x_positions)):
+                if i > 0:
+                    prev_dir = x_positions[i-1] - x_positions[max(0, i-2)] if i > 1 else 0
+                    curr_dir = x_positions[i] - x_positions[i-1]
+                    if prev_dir * curr_dir < 0:  # 방향 변화
+                        direction_changes += 1
+
+            # 3번 이상 방향 변화 = 흔들기
+            if direction_changes >= 3:
+                # 움직임 범위 체크
+                x_range = max(x_positions) - min(x_positions)
+                if x_range > 30:  # 최소 30픽셀 이동
+                    return {
+                        'is_waving': True,
+                        'confidence': min(0.9, 0.6 + direction_changes * 0.1),
+                        'hand': hand
+                    }
+
+        return {'is_waving': False, 'confidence': 0.0, 'hand': None}
+
+
+class DXM1PoseDetector:
+    """
+    DeepX DX-M1 NPU를 사용한 포즈 추정 클래스
+
+    YOLOv5Pose 모델을 사용하여 사람의 관절 위치(키포인트)를 감지합니다.
+    17개 COCO 키포인트를 출력하며, 제스처 인식에 활용됩니다.
+
+    Attributes:
+        model_path (str): YOLOv5Pose DXNN 모델 파일 경로
+        model_size (int): 입력 이미지 크기 (640x640)
+        conf_threshold (float): 신뢰도 임계값
+    """
+
+    def __init__(self, model_path="/home/orangepi/model_for_demo/YOLOv5Pose640_1.dxnn"):
+        """
+        포즈 감지기 초기화
+
+        Args:
+            model_path: YOLOv5Pose 모델 파일 경로
+        """
+        self.model_path = model_path
+        self.ie = None
+        self.model_size = 640
+        self.initialized = False
+        self.conf_threshold = 0.5
+        self.score_threshold = 0.5
+
+        # 제스처 인식기
+        self.gesture_recognizer = GestureRecognizer()
+
+        # 앵커 설정 (YOLOv5Pose 640)
+        self.anchors = {
+            'layer0': {'grid': 80, 'anchors': [(10, 13), (16, 30), (33, 23)]},
+            'layer1': {'grid': 40, 'anchors': [(30, 61), (62, 45), (59, 119)]},
+            'layer2': {'grid': 20, 'anchors': [(116, 90), (156, 198), (373, 326)]},
+        }
+
+    def initialize(self):
+        """NPU 초기화 및 모델 로드"""
+        try:
+            from dx_engine import InferenceEngine
+            self.ie = InferenceEngine(self.model_path)
+            self.initialized = True
+
+            input_info = self.ie.get_input_tensors_info()
+            output_info = self.ie.get_output_tensors_info()
+            self.is_ppu = self.ie.is_ppu()
+
+            print(f"[DX-M1 Pose] Model loaded: {self.model_path}")
+            print(f"[DX-M1 Pose] Is PPU: {self.is_ppu}")
+            print(f"[DX-M1 Pose] Output info: {output_info}")
+            return True
+        except Exception as e:
+            print(f"[DX-M1 Pose] Init failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def letterbox(self, img, new_shape=640, color=(114, 114, 114)):
+        """Letterbox 전처리 (비율 유지 리사이즈)"""
+        shape = img.shape[:2]
+        if isinstance(new_shape, int):
+            new_shape = (new_shape, new_shape)
+
+        r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+        new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+        dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]
+        dw /= 2
+        dh /= 2
+
+        if shape[::-1] != new_unpad:
+            img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
+
+        top = bottom = int(dh)
+        left = right = int(dw)
+        img = cv2.copyMakeBorder(img, top, bottom, left, right,
+                                  cv2.BORDER_CONSTANT, value=color)
+        return img, r, (float(left), float(top))
+
+    def detect(self, frame):
+        """
+        포즈 감지 수행
+
+        Args:
+            frame: 입력 이미지 (BGR)
+
+        Returns:
+            tuple: (poses, result_frame, gestures)
+                - poses: 감지된 포즈 목록 [{keypoints, box, score}, ...]
+                - result_frame: 시각화된 프레임
+                - gestures: 감지된 제스처 목록
+        """
+        if not self.initialized or self.ie is None:
+            return [], frame, []
+
+        try:
+            orig_h, orig_w = frame.shape[:2]
+
+            # 전처리
+            img, ratio, (dw, dh) = self.letterbox(frame, self.model_size)
+
+            # PPU 모델 입력 형식
+            if self.is_ppu:
+                input_data = img.reshape(1, self.model_size, self.model_size * 3).astype(np.uint8)
+            else:
+                input_data = img.reshape(1, self.model_size, self.model_size, 3).astype(np.uint8)
+
+            # 추론 실행
+            outputs = self.ie.run([input_data.flatten()])
+
+            # 포즈 파싱
+            poses = self._parse_poses(outputs[0], orig_w, orig_h, ratio, dw, dh)
+
+            # 제스처 인식
+            gestures = []
+            for pose in poses:
+                gesture = self.gesture_recognizer.recognize(pose['keypoints'])
+                gestures.append(gesture)
+
+            # 시각화
+            result_frame = self.draw_poses(frame.copy(), poses, gestures)
+
+            return poses, result_frame, gestures
+
+        except Exception as e:
+            print(f"[DX-M1 Pose] Detection error: {e}")
+            import traceback
+            traceback.print_exc()
+            return [], frame, []
+
+    def _parse_poses(self, output, orig_w, orig_h, ratio, dw, dh):
+        """포즈 출력 파싱"""
+        poses = []
+
+        try:
+            # PPU 모델은 DevicePose_t 구조체 출력
+            # 구조: [x, y, w, h, score, layer_idx, grid_x, grid_y, box_idx, kpts[17][3]]
+            # 총 크기: 4 + 1 + 4 + 51 = 60 floats per detection
+
+            data = np.frombuffer(output, dtype=np.float32)
+
+            # PPU 모델 출력 파싱
+            if self.is_ppu:
+                # DevicePose_t 구조체 (60 floats)
+                struct_size = 60
+                num_detections = len(data) // struct_size
+
+                for i in range(min(num_detections, 10)):  # 최대 10명
+                    offset = i * struct_size
+
+                    # 바운딩 박스 및 점수
+                    x = data[offset + 0]
+                    y = data[offset + 1]
+                    w = data[offset + 2]
+                    h = data[offset + 3]
+                    score = data[offset + 4]
+
+                    if score < self.score_threshold:
+                        continue
+
+                    # 좌표 변환 (letterbox 역변환)
+                    x1 = (x - w/2 - dw) / ratio
+                    y1 = (y - h/2 - dh) / ratio
+                    x2 = (x + w/2 - dw) / ratio
+                    y2 = (y + h/2 - dh) / ratio
+
+                    # 범위 제한
+                    x1 = max(0, min(orig_w, x1))
+                    y1 = max(0, min(orig_h, y1))
+                    x2 = max(0, min(orig_w, x2))
+                    y2 = max(0, min(orig_h, y2))
+
+                    # 키포인트 (17개, 각 3값: x, y, conf)
+                    keypoints = []
+                    kpt_offset = offset + 9  # 9 = 5 (box+score) + 4 (layer, grid, box indices)
+
+                    for k in range(17):
+                        kx = data[kpt_offset + k*3 + 0]
+                        ky = data[kpt_offset + k*3 + 1]
+                        kconf = data[kpt_offset + k*3 + 2]
+
+                        # 좌표 변환
+                        kx = (kx - dw) / ratio
+                        ky = (ky - dh) / ratio
+                        kx = max(0, min(orig_w, kx))
+                        ky = max(0, min(orig_h, ky))
+
+                        keypoints.append((kx, ky, kconf))
+
+                    poses.append({
+                        'box': (int(x1), int(y1), int(x2), int(y2)),
+                        'score': float(score),
+                        'keypoints': keypoints
+                    })
+            else:
+                # Non-PPU 모델 (raw tensor 출력)
+                # 이 경우 수동으로 후처리 필요
+                # TODO: Non-PPU 모델 지원 추가
+                pass
+
+        except Exception as e:
+            print(f"[DX-M1 Pose] Parse error: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return poses
+
+    def draw_poses(self, frame, poses, gestures=None):
+        """
+        포즈 시각화
+
+        Args:
+            frame: 입력 프레임
+            poses: 감지된 포즈 목록
+            gestures: 감지된 제스처 목록
+
+        Returns:
+            시각화된 프레임
+        """
+        result = frame.copy()
+
+        for idx, pose in enumerate(poses):
+            keypoints = pose['keypoints']
+            box = pose['box']
+            score = pose['score']
+
+            # 바운딩 박스 색상
+            color = PERSON_COLORS[idx % len(PERSON_COLORS)]
+
+            # 바운딩 박스 그리기
+            x1, y1, x2, y2 = box
+            cv2.rectangle(result, (x1, y1), (x2, y2), color, 2)
+
+            # 스켈레톤 그리기
+            points = []
+            for kx, ky, kconf in keypoints:
+                if kconf > self.conf_threshold:
+                    points.append((int(kx), int(ky)))
+                else:
+                    points.append(None)
+
+            # 연결선 그리기
+            for i, (start, end) in enumerate(SKELETON_CONNECTIONS):
+                if start < len(points) and end < len(points):
+                    pt1 = points[start]
+                    pt2 = points[end]
+                    if pt1 and pt2:
+                        skel_color = SKELETON_COLORS[i % len(SKELETON_COLORS)]
+                        cv2.line(result, pt1, pt2, skel_color, 2, cv2.LINE_AA)
+
+            # 키포인트 그리기
+            for i, pt in enumerate(points):
+                if pt:
+                    # 키포인트 색상 (부위별)
+                    if i < 5:  # 얼굴
+                        kpt_color = (0, 255, 0)
+                    elif i < 11:  # 상체
+                        kpt_color = (0, 128, 255)
+                    else:  # 하체
+                        kpt_color = (255, 153, 51)
+                    cv2.circle(result, pt, 4, kpt_color, -1)
+                    cv2.circle(result, pt, 5, (255, 255, 255), 1)
+
+            # 제스처 표시
+            if gestures and idx < len(gestures):
+                gesture = gestures[idx]
+                gesture_text = gesture['gesture'].replace('_', ' ').title()
+                gesture_conf = gesture['confidence']
+
+                # 제스처 라벨
+                label = f"{gesture_text} ({gesture_conf:.0%})"
+                (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+
+                # 배경
+                cv2.rectangle(result, (x1, y1 - th - 15), (x1 + tw + 10, y1 - 5), color, -1)
+                cv2.putText(result, label, (x1 + 5, y1 - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+            # 점수 표시
+            score_text = f"{score:.0%}"
+            cv2.putText(result, score_text, (x2 - 50, y1 + 20),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+        return result
+
+
 class SystemMonitor(QThread):
     stats_updated = pyqtSignal(dict)
 
@@ -2984,6 +3584,9 @@ class ProductionApp(QMainWindow):
         # 카메라 및 검출 관련 변수
         self.cap = None                              # OpenCV 비디오 캡처 객체
         self.detector = None
+        self.pose_detector = None                    # 포즈/제스처 감지기
+        self.detection_mode = 'none'                 # 감지 모드: 'none', 'object', 'pose', 'face'
+        self.current_gestures = []                   # 현재 감지된 제스처
         self.detections = []
         self.frame_count = 0
         self.fps = 0
@@ -3091,6 +3694,78 @@ class ProductionApp(QMainWindow):
 
         layout = QVBoxLayout(panel)
 
+        # DX-M1 감지 모드 선택 바
+        mode_bar = QFrame()
+        mode_bar.setStyleSheet("background: #1a1a2e; border-radius: 4px; padding: 3px;")
+        mode_layout = QHBoxLayout(mode_bar)
+        mode_layout.setContentsMargins(8, 4, 8, 4)
+        mode_layout.setSpacing(8)
+
+        mode_title = QLabel("DX-M1 Mode:")
+        mode_title.setStyleSheet("color: #00ff88; font-weight: bold; font-size: 11px;")
+        mode_layout.addWidget(mode_title)
+
+        # 객체 감지 버튼
+        self.object_btn = QPushButton("📦 Object")
+        self.object_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2c3e50;
+                color: #7f8c8d;
+                border: 1px solid #34495e;
+                border-radius: 4px;
+                padding: 5px 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: #34495e; }
+        """)
+        self.object_btn.clicked.connect(self.toggle_object_detection)
+        self.object_btn.setToolTip("YOLOX-S 객체 감지 (80 클래스)")
+        mode_layout.addWidget(self.object_btn)
+
+        # 포즈/제스처 버튼 (라이선스 문제로 비활성화)
+        self.pose_btn = QPushButton("🦴 Pose/Gesture")
+        self.pose_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1a1a2e;
+                color: #555555;
+                border: 1px solid #333344;
+                border-radius: 4px;
+                padding: 5px 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: #252538; color: #666666; }
+        """)
+        self.pose_btn.clicked.connect(self.toggle_pose_detection)
+        self.pose_btn.setToolTip("⚠️ 비활성화: YOLOv5Pose AGPL-3.0 라이선스 문제")
+        mode_layout.addWidget(self.pose_btn)
+
+        # 얼굴/감정 버튼
+        self.face_btn = QPushButton("😊 Face/Emotion")
+        self.face_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2c3e50;
+                color: #7f8c8d;
+                border: 1px solid #34495e;
+                border-radius: 4px;
+                padding: 5px 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: #34495e; }
+        """)
+        self.face_btn.clicked.connect(self.toggle_face_detection)
+        self.face_btn.setToolTip("얼굴 인식 및 감정 분석 (준비 중)")
+        mode_layout.addWidget(self.face_btn)
+
+        mode_layout.addStretch()
+
+        # 현재 모드 표시
+        self.mode_status = QLabel("Camera Only")
+        self.mode_status.setStyleSheet("color: #888; font-size: 10px;")
+        mode_layout.addWidget(self.mode_status)
+
+        layout.addWidget(mode_bar)
+
+        # 비디오 표시 영역
         self.video_label = QLabel()
         self.video_label.setMinimumSize(640, 480)
         self.video_label.setAlignment(Qt.AlignCenter)
@@ -3407,6 +4082,7 @@ class ProductionApp(QMainWindow):
             print("[Camera] Failed to open")
 
     def init_detector(self):
+        # 객체 감지기 초기화 (YOLOX-S)
         self.detector = DXM1Detector(MODEL_PATH)
         if self.detector.initialize():
             self.npu_label.setText("NPU: Active")
@@ -3414,6 +4090,139 @@ class ProductionApp(QMainWindow):
         else:
             self.npu_label.setText("NPU: Error")
             self.npu_label.setStyleSheet("color: #ff0000;")
+
+        # 포즈/제스처 감지기 초기화 (YOLOv5Pose) - 지연 로딩
+        # 모드 전환 시 초기화됨
+        self.pose_detector = None
+
+    def init_pose_detector(self):
+        """포즈 감지기 초기화 (모드 전환 시 호출)"""
+        if self.pose_detector is None:
+            pose_model_path = "/home/orangepi/model_for_demo/YOLOv5Pose640_1.dxnn"
+            self.pose_detector = DXM1PoseDetector(pose_model_path)
+            if self.pose_detector.initialize():
+                print("[Pose] Detector initialized successfully")
+                return True
+            else:
+                print("[Pose] Detector initialization failed")
+                self.pose_detector = None
+                return False
+        return True
+
+    def set_detection_mode(self, mode):
+        """
+        감지 모드 설정
+
+        Args:
+            mode: 'none', 'object', 'pose', 'face'
+        """
+        # 버튼 스타일 초기화
+        btn_style_off = """
+            QPushButton {
+                background-color: #2c3e50;
+                color: #7f8c8d;
+                border: 1px solid #34495e;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: #34495e; }
+        """
+        btn_style_on = """
+            QPushButton {
+                background-color: #27ae60;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #2ecc71; }
+        """
+
+        # 모든 버튼 비활성화 스타일
+        if hasattr(self, 'object_btn'):
+            self.object_btn.setStyleSheet(btn_style_off)
+        if hasattr(self, 'pose_btn'):
+            self.pose_btn.setStyleSheet(btn_style_off)
+        if hasattr(self, 'face_btn'):
+            self.face_btn.setStyleSheet(btn_style_off)
+
+        if mode == 'none':
+            self.detection_mode = 'none'
+            if hasattr(self, 'mode_status'):
+                self.mode_status.setText("Camera Only")
+                self.mode_status.setStyleSheet("color: #888; font-size: 10px;")
+            print("[Mode] Camera only (no detection)")
+
+        elif mode == 'object':
+            if self.detector and self.detector.initialized:
+                self.detection_mode = 'object'
+                if hasattr(self, 'object_btn'):
+                    self.object_btn.setStyleSheet(btn_style_on)
+                if hasattr(self, 'mode_status'):
+                    self.mode_status.setText("Object Detection ON")
+                    self.mode_status.setStyleSheet("color: #27ae60; font-size: 10px; font-weight: bold;")
+                print("[Mode] Object detection ON")
+            else:
+                print("[Mode] Object detector not initialized")
+
+        elif mode == 'pose':
+            if self.init_pose_detector():
+                self.detection_mode = 'pose'
+                if hasattr(self, 'pose_btn'):
+                    self.pose_btn.setStyleSheet(btn_style_on)
+                if hasattr(self, 'mode_status'):
+                    self.mode_status.setText("Pose/Gesture ON")
+                    self.mode_status.setStyleSheet("color: #9b59b6; font-size: 10px; font-weight: bold;")
+                print("[Mode] Pose/Gesture detection ON")
+            else:
+                print("[Mode] Failed to initialize pose detector")
+
+        elif mode == 'face':
+            # TODO: 얼굴 감지기 초기화
+            self.detection_mode = 'face'
+            if hasattr(self, 'face_btn'):
+                self.face_btn.setStyleSheet(btn_style_on)
+            if hasattr(self, 'mode_status'):
+                self.mode_status.setText("Face/Emotion ON")
+                self.mode_status.setStyleSheet("color: #e74c3c; font-size: 10px; font-weight: bold;")
+            print("[Mode] Face detection ON (coming soon)")
+
+    def toggle_object_detection(self):
+        """객체 감지 토글"""
+        if self.detection_mode == 'object':
+            self.set_detection_mode('none')
+        else:
+            self.set_detection_mode('object')
+
+    def toggle_pose_detection(self):
+        """포즈/제스처 감지 토글 - 현재 비활성화 (라이선스 문제)
+
+        YOLOv5Pose 모델은 AGPL-3.0 라이선스로 상업적 사용에 제약이 있습니다.
+        Apache 2.0 라이선스의 대안 모델(YOLOX-Pose, RTMPose)이 DX-M1용으로 준비되면 활성화됩니다.
+        """
+        # 라이선스 경고 메시지 표시
+        from PyQt5.QtWidgets import QMessageBox
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("기능 비활성화")
+        msg.setText("포즈/제스처 인식 기능이 비활성화되어 있습니다.")
+        msg.setInformativeText(
+            "YOLOv5Pose 모델은 AGPL-3.0 라이선스로 상업적 사용에 제약이 있습니다.\n\n"
+            "Apache 2.0 라이선스의 대안 모델(YOLOX-Pose, RTMPose)이 "
+            "DX-M1 NPU용으로 준비되면 이 기능이 활성화됩니다."
+        )
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec_()
+
+    def toggle_face_detection(self):
+        """얼굴/감정 감지 토글"""
+        if self.detection_mode == 'face':
+            self.set_detection_mode('none')
+        else:
+            self.set_detection_mode('face')
 
     def init_workers(self):
         self.sys_monitor = SystemMonitor()
@@ -3468,29 +4277,58 @@ class ProductionApp(QMainWindow):
         frame = cv2.flip(frame, 1)
 
         self.frame_count += 1
+        result_frame = frame
 
-        # Run detection
-        if self.detector and self.detector.initialized:
-            t0 = time.time()
-            detections, result_frame = self.detector.detect(frame)
-            self.inference_time = (time.time() - t0) * 1000
+        # 감지 모드에 따른 처리
+        if self.detection_mode == 'none':
+            # 카메라만 표시 (감지 없음)
+            self.inference_time = 0
+            self.detections = []
+            self.current_gestures = []
+            self.det_count_label.setText("Mode: Camera Only")
+            self.det_list_label.setText("Detection: OFF")
 
-            self.detections = detections
-            self.llm_worker.update_detections(detections)
-            # Store current frame for Vision LLM capture
-            self.current_result_frame = result_frame.copy()
+        elif self.detection_mode == 'object':
+            # 객체 감지 모드
+            if self.detector and self.detector.initialized:
+                t0 = time.time()
+                detections, result_frame = self.detector.detect(frame)
+                self.inference_time = (time.time() - t0) * 1000
 
-            # Update UI
-            self.det_count_label.setText(f"Objects: {len(detections)}")
+                self.detections = detections
+                self.llm_worker.update_detections(detections)
 
-            if detections:
-                counts = Counter([d['class'] for d in detections])
-                det_str = ", ".join([f"{k}:{v}" for k, v in counts.most_common(5)])
-                self.det_list_label.setText(f"Detected: {det_str}")
-            else:
-                self.det_list_label.setText("Detected: None")
-        else:
-            result_frame = frame
+                self.det_count_label.setText(f"Objects: {len(detections)}")
+                if detections:
+                    counts = Counter([d['class'] for d in detections])
+                    det_str = ", ".join([f"{k}:{v}" for k, v in counts.most_common(5)])
+                    self.det_list_label.setText(f"Detected: {det_str}")
+                else:
+                    self.det_list_label.setText("Detected: None")
+
+        elif self.detection_mode == 'pose':
+            # 포즈/제스처 감지 모드
+            if self.pose_detector and self.pose_detector.initialized:
+                t0 = time.time()
+                poses, result_frame, gestures = self.pose_detector.detect(frame)
+                self.inference_time = (time.time() - t0) * 1000
+
+                self.current_gestures = gestures
+                self.det_count_label.setText(f"Poses: {len(poses)}")
+
+                if gestures:
+                    gesture_strs = [g['gesture'].replace('_', ' ').title() for g in gestures]
+                    self.det_list_label.setText(f"Gestures: {', '.join(gesture_strs)}")
+                else:
+                    self.det_list_label.setText("Gestures: None")
+
+        elif self.detection_mode == 'face':
+            # 얼굴/감정 감지 모드 (TODO: 구현 예정)
+            self.det_count_label.setText("Mode: Face Detection")
+            self.det_list_label.setText("(Coming Soon)")
+
+        # Store current frame for Vision LLM capture
+        self.current_result_frame = result_frame.copy()
 
         # Display
         rgb = cv2.cvtColor(result_frame, cv2.COLOR_BGR2RGB)
